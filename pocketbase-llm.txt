@@ -1,0 +1,800 @@
+# PocketBase Complete Distilled Reference
+
+> **Open Source backend in 1 file** - Embedded SQLite database with realtime subscriptions, built-in auth management, convenient dashboard UI and simple REST-ish API. Can be used both as Go framework and standalone application.
+
+---
+
+## Quick Start
+
+### Installation & Setup
+```bash
+# Download prebuilt executable (replace with your platform)
+# Extract and run
+./pocketbase serve
+
+# First run generates installer link
+# Default routes:
+# http://127.0.0.1:8090 - Static files (if pb_public exists)
+# http://127.0.0.1:8090/_/ - Admin dashboard
+# http://127.0.0.1:8090/api/ - REST API
+```
+
+### Directory Structure
+```
+your-app/
+├── pocketbase          # Executable
+├── pb_data/           # App data, files (add to .gitignore)
+├── pb_migrations/     # JS migration files (commit to repo)
+└── pb_hooks/          # Custom JS server-side code
+```
+
+---
+
+## Core Concepts
+
+### Collections
+**3 types**: Base (default), View (read-only SQL), Auth (users)
+
+#### Base Collection
+```javascript
+// Regular data storage
+// Fields: text, number, email, url, date, select, json, file, relation, etc.
+```
+
+#### Auth Collection
+```javascript
+// Special system fields (cannot be renamed/deleted):
+// email, emailVisibility, verified, password, tokenKey
+// Multiple auth collections allowed (users, managers, staff, etc.)
+```
+
+#### View Collection
+```sql
+-- Read-only, populated from SQL SELECT
+SELECT posts.id, posts.name, count(comments.id) as totalComments 
+FROM posts LEFT JOIN comments on comments.postId = posts.id 
+GROUP BY posts.id
+```
+
+### API Rules (Security)
+Each collection has 5 rules + 1 additional for Auth:
+- **listRule** - WHO can view list of records
+- **viewRule** - WHO can view single record  
+- **createRule** - WHO can create records
+- **updateRule** - WHO can update records
+- **deleteRule** - WHO can delete records
+- **manageRule** (Auth only) - WHO can fully manage auth records
+
+#### Rule Values
+```javascript
+null             // "locked" - superusers only (default)
+""              // Empty - anyone (guests, users, superusers)
+"rule_expression" // Custom filter expression
+```
+
+#### Rule Examples
+```javascript
+// Only authenticated users
+"@request.auth.id != ''"
+
+// Only record owner
+"@request.auth.id != '' && author = @request.auth.id"
+
+// Role-based access
+"@request.auth.role = 'staff'"
+
+// Combined rules
+"@request.auth.id != '' && (@request.auth.role = 'staff' || author = @request.auth.id)"
+
+// Only active records
+"status = 'active'"
+
+// Nested relations
+"someRelField.anotherRelField.author = @request.auth.id"
+```
+
+#### Available Fields in Rules
+```javascript
+// Collection schema fields (including nested relations)
+someRelField.status != "pending"
+
+// Request context
+@request.context     // default, oauth2, otp, password, realtime, protectedFile
+@request.method      // GET, POST, PUT, DELETE
+@request.headers.*   // Request headers
+@request.query.*     // Query parameters  
+@request.body.*      // Request body fields
+@request.auth.*      // Current authenticated user
+
+// Cross-collection queries
+@collection.news.categoryId ?= categoryId
+@collection.news.author ?= @request.auth.id
+```
+
+---
+
+## Client-Side Integration
+
+### JavaScript SDK
+
+#### Installation
+```bash
+npm install pocketbase
+# or
+import PocketBase from 'https://cdn.jsdelivr.net/gh/pocketbase/js-sdk@master/dist/pocketbase.es.mjs'
+```
+
+#### Basic Setup
+```javascript
+import PocketBase from 'pocketbase';
+
+const pb = new PocketBase('http://127.0.0.1:8090');
+
+// Enable auto cancellation for duplicated requests
+pb.autoCancellation(false);
+```
+
+### Authentication
+
+#### Password Authentication
+```javascript
+// Auth with email/password
+const authData = await pb.collection('users').authWithPassword(
+    'user@example.com', 
+    'password123'
+);
+
+// Access auth data
+console.log(pb.authStore.isValid);
+console.log(pb.authStore.token);
+console.log(pb.authStore.record.id);
+
+// Logout (clear local state)
+pb.authStore.clear();
+```
+
+#### OAuth2 Authentication
+```javascript
+// Initialize OAuth2 flow
+const authData = await pb.collection('users').authWithOAuth2({
+    provider: 'google' // google, facebook, github, etc.
+});
+
+// Callback URL must be: https://yourdomain.com/api/oauth2-redirect
+```
+
+#### OTP (One-Time Password)
+```javascript
+// Request OTP email
+const result = await pb.collection('users').requestOTP('user@example.com');
+
+// Verify OTP
+const authData = await pb.collection('users').authWithOTP(
+    result.otpId, 
+    '123456' // Code from email
+);
+```
+
+#### Multi-Factor Authentication
+```javascript
+try {
+    await pb.collection('users').authWithPassword('user@example.com', 'password');
+} catch (e) {
+    const mfaId = e.response['mfaId'];
+    if (mfaId) {
+        // MFA required - request OTP
+        const result = await pb.collection('users').requestOTP('user@example.com');
+        await pb.collection('users').authWithOTP(result.otpId, 'EMAIL_CODE', {
+            query: { 'mfaId': mfaId }
+        });
+    }
+}
+```
+
+### CRUD Operations
+
+#### Create Record
+```javascript
+const record = await pb.collection('posts').create({
+    title: 'Hello world!',
+    content: 'Lorem ipsum...',
+    status: 'active'
+});
+```
+
+#### List Records
+```javascript
+// Paginated list
+const resultList = await pb.collection('posts').getList(1, 20, {
+    filter: 'status = "active" && created >= "2023-01-01"',
+    sort: '-created',
+    expand: 'author,category'
+});
+
+// Get all records
+const records = await pb.collection('posts').getFullList({
+    sort: '-created'
+});
+
+// Get first matching record
+const record = await pb.collection('posts').getFirstListItem('status="active"');
+```
+
+#### Get Single Record
+```javascript
+const record = await pb.collection('posts').getOne('RECORD_ID', {
+    expand: 'author,category'
+});
+```
+
+#### Update Record
+```javascript
+const record = await pb.collection('posts').update('RECORD_ID', {
+    title: 'Updated title',
+    content: 'Updated content'
+});
+```
+
+#### Delete Record
+```javascript
+await pb.collection('posts').delete('RECORD_ID');
+```
+
+### File Upload & Management
+
+#### Upload Files
+```javascript
+const formData = new FormData();
+formData.append('title', 'Hello world!');
+formData.append('avatar', fileInput.files[0]);
+formData.append('gallery', fileInput.files[1]);
+formData.append('gallery', fileInput.files[2]);
+
+const record = await pb.collection('posts').create(formData);
+```
+
+#### File URLs
+```javascript
+// Get file URL
+const url = pb.files.getUrl(record, 'avatar');
+// → http://127.0.0.1:8090/api/files/posts/RECORD_ID/avatar.jpg
+
+// With query params (thumb)
+const thumbUrl = pb.files.getUrl(record, 'avatar', {'thumb': '100x250'});
+```
+
+#### Protected Files
+```javascript
+// Generate file token for protected files
+const fileToken = await pb.files.getToken();
+
+// Use token in URL
+const protectedUrl = `${pb.files.getUrl(record, 'document')}?token=${fileToken}`;
+```
+
+### Realtime Subscriptions
+
+#### Subscribe to Changes
+```javascript
+// Subscribe to all records in collection
+pb.collection('posts').subscribe('*', function (e) {
+    console.log(e.action); // 'create', 'update', 'delete'
+    console.log(e.record);
+});
+
+// Subscribe to specific record
+pb.collection('posts').subscribe('RECORD_ID', function (e) {
+    console.log(e.action);
+    console.log(e.record);
+});
+
+// With options
+pb.collection('posts').subscribe('*', function (e) {
+    console.log(e.record);
+}, {
+    expand: 'author,category',
+    filter: 'status = "active"'
+});
+```
+
+#### Unsubscribe
+```javascript
+// Remove specific subscription
+pb.collection('posts').unsubscribe('RECORD_ID');
+
+// Remove all subscriptions for topic
+pb.collection('posts').unsubscribe('*');
+
+// Remove all subscriptions in collection
+pb.collection('posts').unsubscribe();
+```
+
+### Query Filtering & Sorting
+
+#### Filter Operators
+```javascript
+// Comparison
+filter: 'status = "active"'
+filter: 'created >= "2023-01-01"'
+filter: 'score > 100'
+filter: 'title != ""'
+
+// Text matching
+filter: 'title ~ "hello"'        // Contains
+filter: 'title !~ "spam"'        // Not contains  
+filter: 'email ?= "test@"'       // Optional equal (if field exists)
+
+// Arrays/Relations
+filter: 'tags.name ?= "javascript"'
+filter: 'categories:each ~ "tech"'
+
+// Logical operators
+filter: 'status = "active" && created >= "2023-01-01"'
+filter: 'status = "draft" || author = @request.auth.id'
+
+// Null/empty checks
+filter: 'description != ""'
+filter: 'avatar != ""'
+filter: 'publishedDate != ""'
+```
+
+#### Sorting
+```javascript
+sort: 'created'          // Ascending
+sort: '-created'         // Descending  
+sort: '+title,-created'  // Multiple fields
+```
+
+#### Expand (Populate Relations)
+```javascript
+expand: 'author'                    // Single relation
+expand: 'author,category'           // Multiple relations
+expand: 'author.avatar'             // Nested relations
+expand: 'comments(created>=2023)'   // With filter
+expand: 'posts.author.avatar'       // Deep nested
+```
+
+---
+
+## Server-Side Extension (JavaScript)
+
+### File Structure
+```
+pb_hooks/
+├── main.pb.js          # Main hooks file
+├── routes.pb.js        # Custom routes
+└── utils.pb.js         # Utility functions
+```
+
+### Event Hooks
+
+#### Record Hooks
+```javascript
+// Before record operations
+onRecordBeforeCreateRequest((e) => {
+    // e.app, e.collection, e.record, e.uploadedFiles
+    // Validate or modify data before creation
+    e.next();
+}, "users");
+
+onRecordBeforeUpdateRequest((e) => {
+    // Validate or modify data before update
+    e.next();
+}, "posts");
+
+// After record operations  
+onRecordAfterCreateRequest((e) => {
+    // Send welcome email, trigger notifications, etc.
+    e.next();
+}, "users");
+
+onRecordAfterDeleteRequest((e) => {
+    // Cleanup related data
+    e.next();
+}, "posts");
+```
+
+#### Auth Hooks
+```javascript
+onRecordAuthRequest((e) => {
+    // Triggered on successful authentication
+    // e.record, e.token, e.meta, e.authMethod
+    e.next();
+}, "users");
+
+onRecordAuthRefreshRequest((e) => {
+    // Before generating new auth token
+    e.next();
+}, "users");
+```
+
+#### Mail Hooks
+```javascript
+onMailerSend((e) => {
+    // Intercept all outgoing emails
+    // e.app, e.mailer, e.message
+    e.message.subject = "Custom: " + e.message.subject;
+    e.next();
+});
+
+onMailerRecordPasswordResetSend((e) => {
+    // Customize password reset emails
+    e.next();
+});
+```
+
+#### Realtime Hooks
+```javascript
+onRealtimeConnectRequest((e) => {
+    // New realtime connection
+    e.next();
+});
+
+onRealtimeSubscribeRequest((e) => {
+    // Validate subscription requests
+    e.next();
+});
+```
+
+### Custom Routes
+```javascript
+routerAdd("GET", "/hello/{name}", (c) => {
+    const name = c.pathParam("name");
+    return c.json(200, { "message": `Hello ${name}!` });
+});
+
+routerAdd("POST", "/custom-action", (c) => {
+    const data = $apis.requestInfo(c).data;
+    
+    // Your custom logic here
+    
+    return c.json(200, { "result": "success" });
+});
+```
+
+### Database Operations
+```javascript
+// Find records
+const records = $app.findRecordsByFilter("posts", 'status = "active"');
+const record = $app.findRecordById("posts", "RECORD_ID");
+
+// Create record
+const collection = $app.findCollectionByNameOrId("posts");
+const record = new Record(collection, {
+    "title": "New post",
+    "content": "Content here"
+});
+$app.save(record);
+
+// Update record
+record.set("title", "Updated title");
+$app.save(record);
+
+// Delete record
+$app.delete(record);
+```
+
+### Sending Emails
+```javascript
+onRecordAfterCreateRequest((e) => {
+    const message = new MailerMessage({
+        from: {
+            address: e.app.settings().meta.senderAddress,
+            name: e.app.settings().meta.senderName,
+        },
+        to: [{address: e.record.email()}],
+        subject: "Welcome!",
+        html: `<h1>Welcome ${e.record.get("name")}!</h1>`,
+    });
+    
+    e.app.newMailClient().send(message);
+    e.next();
+}, "users");
+```
+
+### Realtime Messaging
+```javascript
+// Send custom realtime message
+const message = new SubscriptionMessage({
+    name: "custom_event",
+    data: JSON.stringify({
+        type: "notification",
+        message: "Something happened!"
+    }),
+});
+
+const clients = $app.subscriptionsBroker().clients();
+for (let clientId in clients) {
+    if (clients[clientId].hasSubscription("notifications")) {
+        clients[clientId].send(message);
+    }
+}
+```
+
+### Available Globals
+```javascript
+$app           // PocketBase app instance
+$apis          // API utilities  
+$security      // Security utilities (JWT, encryption, random strings)
+$template      // Template rendering
+$mails         // Mail utilities
+$filesystem    // File operations
+$forms         // Form validation
+$tokens        // Token operations
+$dbx           // Database utilities
+$os            // OS operations
+```
+
+---
+
+## Admin API (Superuser)
+
+### Collections Management
+```javascript
+// List collections
+const collections = await pb.collections.getList();
+
+// Create collection
+const collection = await pb.collections.create({
+    name: "posts",
+    type: "base",
+    fields: [
+        {
+            name: "title",
+            type: "text",
+            required: true
+        },
+        {
+            name: "content", 
+            type: "editor",
+            required: true
+        }
+    ]
+});
+
+// Update collection
+await pb.collections.update('posts', {
+    listRule: 'status = "published"'
+});
+
+// Delete collection
+await pb.collections.delete('posts');
+```
+
+### Settings Management
+```javascript
+// Authenticate as superuser first
+await pb.collection("_superusers").authWithPassword('admin@example.com', 'password');
+
+// Get all settings
+const settings = await pb.settings.getAll();
+
+// Update settings
+await pb.settings.update({
+    meta: {
+        appName: 'My App',
+        appUrl: 'https://myapp.com'
+    }
+});
+```
+
+---
+
+## Advanced Features
+
+### Field Types
+```javascript
+// Text fields
+text, email, url, editor, json
+
+// Number fields  
+number, bool
+
+// Date/time
+date, datetime
+
+// Selection
+select (single), multiselect
+
+// Relations
+relation (single), multirelation
+
+// Files
+file (single), multifile
+
+// Special
+password, computed
+```
+
+### File Field Options
+```javascript
+{
+    maxSelect: 5,           // Max files
+    maxSize: 5242880,       // 5MB per file
+    mimeTypes: ["image/jpeg", "image/png"],
+    thumbs: ["100x100", "300x300"]
+}
+```
+
+### Relation Field Options
+```javascript
+{
+    collectionId: "users",
+    cascadeDelete: false,
+    maxSelect: 1,           // 1 = single relation, >1 = multiple
+    displayFields: ["name", "email"]
+}
+```
+
+### Database Migrations
+```javascript
+// pb_migrations/TIMESTAMP_migration_name.js
+migrate((db) => {
+    const dao = new Dao(db);
+    
+    // Collection operations
+    const collection = dao.findCollectionByNameOrId("posts");
+    collection.schema.addField(new SchemaField({
+        name: "slug",
+        type: "text"
+    }));
+    
+    return dao.saveCollection(collection);
+}, (db) => {
+    // Rollback
+    const dao = new Dao(db);
+    const collection = dao.findCollectionByNameOrId("posts");
+    collection.schema.removeField("slug");
+    return dao.saveCollection(collection);
+});
+```
+
+### Health Check
+```javascript
+// Built-in health endpoint
+GET /api/health
+// Returns: {"code": 200, "message": "API is healthy."}
+```
+
+---
+
+## Production Deployment
+
+### Environment Variables
+```bash
+PB_DATA_DIR=/path/to/data
+PB_HOOKS_DIR=/path/to/hooks  
+PB_MIGRATIONS_DIR=/path/to/migrations
+PB_PUBLIC_DIR=/path/to/public
+```
+
+### Command Line Options
+```bash
+./pocketbase serve --http=0.0.0.0:8090 --dir=/custom/pb_data --origins="*"
+
+# Available flags:
+--http          # HTTP server address (default: 127.0.0.1:8090)
+--dir           # Data directory (default: pb_data)
+--migrations    # Migrations directory (default: pb_migrations)  
+--hooks         # Hooks directory (default: pb_hooks)
+--public        # Public directory (default: pb_public)
+--origins       # CORS origins
+--dev           # Development mode
+```
+
+### Docker Deployment
+```dockerfile
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY pocketbase .
+EXPOSE 8090
+CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
+```
+
+---
+
+## Best Practices
+
+### Security
+- Always set appropriate API rules
+- Use specific rules instead of empty strings when possible
+- Validate sensitive operations in hooks
+- Use HTTPS in production
+- Set proper CORS origins
+
+### Performance  
+- Use pagination for large datasets
+- Index frequently queried fields
+- Optimize expand queries
+- Cache static files
+- Use CDN for file storage
+
+### Data Modeling
+- Design relations carefully
+- Use computed fields for derived data
+- Consider View collections for complex queries
+- Normalize data appropriately
+- Plan file storage strategy
+
+### Development
+- Use TypeScript declarations for better DX
+- Test API rules thoroughly
+- Version control migrations
+- Monitor hook performance
+- Document custom routes
+
+---
+
+## Common Patterns
+
+### User Profiles
+```javascript
+// Auth collection: users
+// Base collection: profiles (with user relation)
+// Rule: "@request.auth.id != '' && user = @request.auth.id"
+```
+
+### Multi-tenant SaaS
+```javascript
+// Collections: organizations, users, data
+// User belongs to organization
+// Rules: "organization = @request.auth.organization"
+```
+
+### Content Management
+```javascript
+// Collections: posts, categories, tags
+// Rules for draft/published content
+// Editor role management
+```
+
+### File Galleries
+```javascript
+// Use multifile fields
+// Generate thumbnails automatically
+// Implement lazy loading
+```
+
+### Real-time Chat
+```javascript
+// Collection: messages
+// Realtime subscriptions for live updates
+// Message history pagination
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+```javascript
+// CORS issues
+// Set proper origins in settings or CLI
+
+// Auth token expires
+// Implement token refresh logic
+
+// File upload limits
+// Check maxSize in field options
+
+// Realtime connection drops
+// Handle reconnection in client
+
+// Hook performance
+// Avoid heavy computation in JS hooks
+```
+
+### Debug Tools
+```javascript
+// Enable dev mode for detailed errors
+./pocketbase serve --dev
+
+// Use dashboard API preview
+// Check network tab in browser
+// Review pb_data/logs.db
+```
+
+---
+
+*PocketBase v0.27+ - This reference covers the core features and APIs. Check the official documentation for the latest updates and additional features.*
