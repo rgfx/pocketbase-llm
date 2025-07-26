@@ -358,12 +358,38 @@ expand: 'posts.author.avatar'       // Deep nested
 
 ## Server-Side Extension (JavaScript)
 
-### File Structure
+### JavaScript VM Environment
+
+PocketBase v0.17+ includes an embedded ES5 JavaScript engine (goja) for server-side scripting.
+
+#### File Structure
 ```
 pb_hooks/
 ├── main.pb.js          # Main hooks file
 ├── routes.pb.js        # Custom routes
-└── utils.pb.js         # Utility functions
+├── cron.pb.js          # Scheduled tasks
+├── utils.pb.js         # Utility functions
+└── migrations/         # Custom migrations
+    ├── init.pb.js
+    └── seed_data.pb.js
+```
+
+#### Environment Limitations
+- **ES5 JavaScript engine** (goja) - not Node.js or browser
+- **No ES6 modules** (import/export) - use CommonJS (require/module.exports)
+- **No setTimeout/setInterval** - no concurrent execution in handlers
+- **No window, fs, fetch, buffer** - only ES5 spec + PocketBase globals
+- **No npm packages** without bundling/transpiling first
+
+#### Module Loading
+```javascript
+// Load local modules (CommonJS only)
+const utils = require('./utils.pb.js')
+const helpers = require('../shared/helpers.js')
+
+// Load from node_modules (if present)
+const lodash = require('lodash')
+const dayjs = require('dayjs')
 ```
 
 ### Event Hooks
@@ -394,18 +420,135 @@ onRecordAfterDeleteRequest((e) => {
 }, "posts");
 ```
 
-#### Auth Hooks
-```javascript
-onRecordAuthRequest((e) => {
-    // Triggered on successful authentication
-    // e.record, e.token, e.meta, e.authMethod
-    e.next();
-}, "users");
+### Complete Hook Reference
 
-onRecordAuthRefreshRequest((e) => {
-    // Before generating new auth token
-    e.next();
-}, "users");
+#### All Available Hooks
+
+**Application Lifecycle**
+```javascript
+onBootstrap((e) => {}) // App initialization
+onTerminate((e) => {}) // App shutdown
+onSettingsReload((e) => {}) // Settings changed
+```
+
+**Backup Operations**  
+```javascript
+onBackupCreate((e) => {}) // Before backup creation
+onBackupRestore((e) => {}) // Before backup restore
+```
+
+**Collection Hooks**
+```javascript
+// Model-level (triggered anywhere)
+onCollectionCreate((e) => {})
+onCollectionUpdate((e) => {})  
+onCollectionDelete((e) => {})
+onCollectionValidate((e) => {})
+
+// Request-level (API only)
+onCollectionCreateRequest((e) => {})
+onCollectionUpdateRequest((e) => {})
+onCollectionDeleteRequest((e) => {})
+onCollectionViewRequest((e) => {})
+onCollectionsListRequest((e) => {})
+onCollectionsImportRequest((e) => {})
+
+// Success/Error callbacks
+onCollectionAfterCreateSuccess((e) => {})
+onCollectionAfterCreateError((e) => {})
+onCollectionAfterUpdateSuccess((e) => {})
+onCollectionAfterUpdateError((e) => {})
+onCollectionAfterDeleteSuccess((e) => {})
+onCollectionAfterDeleteError((e) => {})
+```
+
+**Record Hooks**
+```javascript
+// Model-level (triggered anywhere) 
+onRecordCreate((e) => {})
+onRecordUpdate((e) => {})
+onRecordDelete((e) => {})
+onRecordValidate((e) => {})
+
+// Request-level (API only)
+onRecordCreateRequest((e) => {})
+onRecordUpdateRequest((e) => {})
+onRecordDeleteRequest((e) => {})
+onRecordViewRequest((e) => {})
+onRecordsListRequest((e) => {})
+
+// Before request hooks
+onRecordBeforeCreateRequest((e) => {})
+onRecordBeforeUpdateRequest((e) => {})
+onRecordBeforeDeleteRequest((e) => {})
+
+// After request hooks  
+onRecordAfterCreateRequest((e) => {})
+onRecordAfterUpdateRequest((e) => {})
+onRecordAfterDeleteRequest((e) => {})
+
+// Success/Error callbacks
+onRecordAfterCreateSuccess((e) => {})
+onRecordAfterCreateError((e) => {})
+onRecordAfterUpdateSuccess((e) => {})
+onRecordAfterUpdateError((e) => {})
+onRecordAfterDeleteSuccess((e) => {})
+onRecordAfterDeleteError((e) => {})
+
+// Special hooks
+onRecordEnrich((e) => {}) // Add custom fields to responses
+```
+
+**Authentication Hooks**
+```javascript
+onRecordAuthRequest((e) => {}) // After successful auth
+onRecordAuthRefreshRequest((e) => {}) // Token refresh
+onRecordAuthWithPasswordRequest((e) => {}) // Password auth
+onRecordAuthWithOAuth2Request((e) => {}) // OAuth2 auth
+onRecordAuthWithOTPRequest((e) => {}) // OTP auth
+
+// Email-related auth
+onRecordRequestVerificationRequest((e) => {}) // Email verification request
+onRecordConfirmVerificationRequest((e) => {}) // Email verification confirm
+onRecordRequestPasswordResetRequest((e) => {}) // Password reset request
+onRecordConfirmPasswordResetRequest((e) => {}) // Password reset confirm
+onRecordRequestEmailChangeRequest((e) => {}) // Email change request
+onRecordConfirmEmailChangeRequest((e) => {}) // Email change confirm
+onRecordRequestOTPRequest((e) => {}) // OTP request
+```
+
+**File Hooks**
+```javascript
+onFileDownloadRequest((e) => {}) // File download
+onFileTokenRequest((e) => {}) // Protected file token
+```
+
+**Realtime Hooks**
+```javascript
+onRealtimeConnectRequest((e) => {}) // New connection
+onRealtimeSubscribeRequest((e) => {}) // Subscription change
+onRealtimeMessageSend((e) => {}) // Message broadcast
+```
+
+**Mail Hooks**
+```javascript
+onMailerSend((e) => {}) // All outgoing emails
+onMailerRecordVerificationSend((e) => {}) // Verification emails
+onMailerRecordPasswordResetSend((e) => {}) // Password reset emails  
+onMailerRecordEmailChangeSend((e) => {}) // Email change emails
+onMailerRecordAuthAlertSend((e) => {}) // Login alert emails
+onMailerRecordOTPSend((e) => {}) // OTP emails
+```
+
+**Settings Hooks**
+```javascript
+onSettingsListRequest((e) => {}) // Settings view
+onSettingsUpdateRequest((e) => {}) // Settings update
+```
+
+**Batch Operations**
+```javascript
+onBatchRequest((e) => {}) // Batch API requests
 ```
 
 #### Mail Hooks
@@ -511,18 +654,197 @@ for (let clientId in clients) {
 }
 ```
 
-### Available Globals
+### Available Globals & JSVM APIs
+
+The PocketBase JavaScript VM provides extensive built-in globals and APIs:
+
+#### Core Application APIs
 ```javascript
 $app           // PocketBase app instance
-$apis          // API utilities  
+$apis          // API utilities and middleware  
 $security      // Security utilities (JWT, encryption, random strings)
 $template      // Template rendering
 $mails         // Mail utilities
 $filesystem    // File operations
 $forms         // Form validation
-$tokens        // Token operations
 $dbx           // Database utilities
 $os            // OS operations
+$http          // HTTP client utilities
+$filepath      // File path utilities
+__hooks        // Hooks directory path
+```
+
+#### $app - Core Application Methods
+```javascript
+// Database operations
+$app.findRecordById("collection", "id")
+$app.findRecordsByFilter("collection", "filter", "-created", 50)
+$app.findCollectionByNameOrId("collection")
+$app.findFirstRecordByFilter("collection", "filter")
+
+// Save operations
+$app.save(record)
+$app.delete(record)
+$app.saveCollection(collection)
+
+// Auth operations
+$app.createAuthRecord("collection", {email: "...", password: "..."})
+$app.canAccessRecord(record, requestInfo, rule)
+
+// Expand relations
+$app.expandRecord(record, "relation1,relation2")
+$app.expandRecords([record1, record2], "relation1,relation2")
+
+// Settings
+$app.settings()
+$app.encryptionEnv() // Gets encryption env key name
+
+// Database access
+$app.db() // Direct database access
+$app.auxDb() // Auxiliary database access
+```
+
+#### $apis - API Utilities & Middleware
+```javascript
+// Request info
+$apis.requestInfo(c) // Gets RequestInfo from context
+$apis.staticDirectoryHandler(dir, indexFallback) // Static file handler
+
+// Auth middleware
+$apis.requireAuth() // Any auth collection
+$apis.requireAuth("users", "managers") // Specific collections only
+$apis.requireSuperuserAuth() // Superuser only
+
+// Response helpers
+$apis.recordAuthResponse(e, authRecord, authMethod, meta) // Standard auth response
+$apis.enrichRecord(requestInfo, collection, record, rule) // Enrich record data
+$apis.enrichRecords(requestInfo, collection, records, rule) // Enrich multiple records
+
+// Error responses
+$apis.newBadRequestError(message, data)
+$apis.newForbiddenError(message, data)
+$apis.newNotFoundError(message, data)
+$apis.newUnauthorizedError(message, data)
+```
+
+#### $security - Security & Encryption
+```javascript
+// Random generation
+$security.randomString(length) // Random string
+$security.randomStringWithAlphabet(length, alphabet) // Custom alphabet
+$security.pseudorandomString(length) // Pseudorandom string
+$security.pseudorandomStringWithAlphabet(length, alphabet)
+
+// Hashing
+$security.hash(data) // SHA256 hash
+$security.hashWithSalt(data, salt) // Hash with salt
+$security.equal(hash1, hash2) // Constant time comparison
+
+// JWT operations
+$security.parseJWT(token) // Parse JWT token
+$security.createJWT(payload, signingKey, duration) // Create JWT
+$security.parseUnverifiedJWT(token) // Parse without verification
+
+// Encryption (AES-256-GCM)
+$security.encrypt(data, key) // Encrypt data
+$security.decrypt(encryptedData, key) // Decrypt data
+
+// Generating keys
+$security.hs256() // Generate HS256 key
+$security.hs512() // Generate HS512 key
+```
+
+#### $template - Template Rendering
+```javascript
+// HTML template rendering
+$template.html(templateString, data) // Render HTML template
+$template.loadFS(filesystem, pattern) // Load templates from filesystem
+```
+
+#### $mails - Email Operations
+```javascript
+// Send emails
+$mails.send(mailerMessage) // Send email using configured mailer
+$mails.sendUsingOAuth2(mailerMessage, oauth2Config) // Send via OAuth2
+$mails.sendUsingSmtp(mailerMessage, smtpConfig) // Send via SMTP
+```
+
+#### $filesystem - File Operations
+```javascript
+// File system operations
+$filesystem.exists(path) // Check if file/dir exists
+$filesystem.list(dir) // List directory contents
+$filesystem.serve(c, key, name) // Serve file from filesystem
+$filesystem.copy(src, dest) // Copy file
+$filesystem.upload(multipart, key) // Handle file upload
+$filesystem.delete(key) // Delete file
+```
+
+#### $dbx - Database Utilities
+```javascript
+// Database query building and operations
+$dbx.query(sql, ...params) // Execute SQL query
+$dbx.select(...columns) // SELECT query builder
+$dbx.hashExp(data) // Create hash expression for queries
+$dbx.in(column, values) // IN clause helper
+$dbx.notIn(column, values) // NOT IN clause helper
+```
+
+#### $os - Operating System
+```javascript
+// OS operations
+$os.exec(command, ...args) // Execute system command
+$os.getenv(key) // Get environment variable
+$os.hostname() // Get system hostname
+$os.tempDir() // Get temp directory path
+```
+
+#### $http - HTTP Client
+```javascript
+// HTTP requests
+$http.send({
+    url: "https://api.example.com/data",
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({key: "value"}),
+    timeout: 30 // seconds
+})
+```
+
+#### Utility Functions
+```javascript
+// Global utility functions
+sleep(milliseconds) // Sleep/delay execution
+cronAdd(id, cronExpr, handler) // Add cron job
+cronRemove(id) // Remove cron job
+migrate(upFunc, downFunc) // Database migration
+readerToString(reader, maxBytes) // Convert reader to string
+
+// Router functions  
+routerAdd(method, path, handler, ...middlewares) // Add route
+routerUse(handler) // Add global middleware
+```
+
+#### Form Constructors
+```javascript
+// Form validation helpers
+new RecordUpsertForm($app, record) // Record create/update form
+new TestEmailSendForm($app) // Test email form
+new TestS3FilesystemForm($app) // Test S3 form
+new AppleClientSecretCreateForm($app) // Apple OAuth form
+```
+
+#### Error Constructors
+```javascript
+// Create custom errors
+new ApiError(status, message, data) // Generic API error
+new BadRequestError(message, data) // 400 error
+new UnauthorizedError(message, data) // 401 error  
+new ForbiddenError(message, data) // 403 error
+new NotFoundError(message, data) // 404 error
+new TooManyRequestsError(message, data) // 429 error
+new InternalServerError(message, data) // 500 error
+new ValidationError(field, code, message) // Validation error
 ```
 
 ---
