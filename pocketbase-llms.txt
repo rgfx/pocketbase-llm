@@ -1,1122 +1,1666 @@
-# PocketBase Complete Distilled Reference
+# PocketBase Complete Documentation
 
-> **Open Source backend in 1 file** - Embedded SQLite database with realtime subscriptions, built-in auth management, convenient dashboard UI and simple REST-ish API. Can be used both as Go framework and standalone application.
+PocketBase documentation optimized for AI-assisted development. Comprehensive reference covering core platform features, JavaScript SDK, and server-side scripting capabilities.
 
 ---
 
-## Quick Start
+## Table of Contents
 
-### Installation & Setup
+1. [Introduction](#introduction)
+2. [Installation and Setup](#installation-and-setup)
+3. [Collections](#collections)
+4. [API Rules and Security](#api-rules-and-security)
+5. [JavaScript SDK](#javascript-sdk)
+6. [Authentication](#authentication)
+7. [CRUD Operations](#crud-operations)
+8. [File Management](#file-management)
+9. [Realtime Subscriptions](#realtime-subscriptions)
+10. [Server-side JavaScript (JSVM)](#server-side-javascript-jsvm)
+11. [Deployment](#deployment)
+12. [Advanced Configuration](#advanced-configuration)
+
+---
+
+## Introduction
+
+PocketBase is an **"Open Source backend in 1 file"** with the following key features:
+
+- **Embedded SQLite database** with automatic migrations
+- **Realtime subscriptions** (server-sent events and WebSocket)
+- **Built-in auth management** with multiple providers
+- **Convenient dashboard UI** for admin operations
+- **Simple REST-ish API** with flexible rules
+- **Server-side JavaScript extensions** (JSVM) for custom logic
+
+### Core Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Client App    │◄──►│   PocketBase     │◄──►│   SQLite DB     │
+│                 │    │                  │    │                 │
+│ - Web/Mobile    │    │ - REST API       │    │ - Collections   │
+│ - JavaScript    │    │ - Auth System    │    │ - Relations     │
+│ - Realtime      │    │ - File Storage   │    │ - Migrations    │
+│ - File Upload   │    │ - Admin UI       │    │ - Backups       │
+└─────────────────┘    │ - JSVM Hooks     │    └─────────────────┘
+                       └──────────────────┘
+```
+
+---
+
+## Installation and Setup
+
+### Download and Install
+
+1. **Download** the appropriate executable from [releases](https://github.com/pocketbase/pocketbase/releases)
+2. **Extract** the archive
+3. **Run** the executable:
+
 ```bash
-# Download prebuilt executable (replace with your platform)
-# Extract and run
+# Start the server
 ./pocketbase serve
 
-# First run generates installer link
-# Default routes:
-# http://127.0.0.1:8090 - Static files (if pb_public exists)
-# http://127.0.0.1:8090/_/ - Admin dashboard
-# http://127.0.0.1:8090/api/ - REST API
+# Custom port and directory
+./pocketbase serve --http=127.0.0.1:8091 --dir=/path/to/pb_data
 ```
+
+### Default Routes
+
+Once started, PocketBase exposes several routes:
+
+- **Static files**: `http://127.0.0.1:8090/`
+- **Admin dashboard**: `http://127.0.0.1:8090/_/`
+- **REST API**: `http://127.0.0.1:8090/api/`
 
 ### Directory Structure
+
 ```
 your-app/
-├── pocketbase          # Executable
-├── pb_data/           # App data, files (add to .gitignore)
-├── pb_migrations/     # JS migration files (commit to repo)
-└── pb_hooks/          # Custom JS server-side code
+├── pocketbase              # The executable
+├── pb_data/                # Data directory (auto-created)
+│   ├── data.db            # SQLite database
+│   ├── logs.db            # Request logs
+│   └── storage/           # Uploaded files
+├── pb_migrations/          # Database migrations (optional)
+│   └── *.js               # Migration files
+└── pb_hooks/              # Server-side JS (optional)
+    └── *.pb.js            # Hook files
 ```
 
 ---
 
-## Core Concepts
+## Collections
 
-### Collections
-**3 types**: Base (default), View (read-only SQL), Auth (users)
+Collections are the primary way to organize your data in PocketBase. There are 3 types:
 
-#### Base Collection
+### 1. Base Collection
+Standard data storage with CRUD operations.
+
 ```javascript
-// Regular data storage
-// Fields: text, number, email, url, date, select, json, file, relation, etc.
+// Example: Posts collection
+{
+  "name": "posts",
+  "type": "base",
+  "schema": [
+    {
+      "name": "title",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "content",
+      "type": "editor"
+    },
+    {
+      "name": "status",
+      "type": "select",
+      "options": {
+        "values": ["draft", "published", "archived"]
+      }
+    }
+  ]
+}
 ```
 
-#### Auth Collection
+### 2. Auth Collection
+User management with built-in authentication features.
+
 ```javascript
-// Special system fields (cannot be renamed/deleted):
-// email, emailVisibility, verified, password, tokenKey
-// Multiple auth collections allowed (users, managers, staff, etc.)
+// Example: Users collection
+{
+  "name": "users",
+  "type": "auth",
+  "options": {
+    "allowEmailAuth": true,
+    "allowUsernameAuth": false,
+    "requireEmail": true
+  },
+  "schema": [
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "avatar",
+      "type": "file",
+      "options": {
+        "maxSelect": 1,
+        "maxSize": 5242880,
+        "mimeTypes": ["image/jpeg", "image/png"]
+      }
+    }
+  ]
+}
 ```
 
-#### View Collection
-```sql
--- Read-only, populated from SQL SELECT
-SELECT posts.id, posts.name, count(comments.id) as totalComments 
-FROM posts LEFT JOIN comments on comments.postId = posts.id 
-GROUP BY posts.id
+### 3. View Collection
+Read-only collections generated from SQL queries.
+
+```javascript
+// Example: Analytics view
+{
+  "name": "user_stats",
+  "type": "view",
+  "options": {
+    "query": "SELECT users.id, users.name, COUNT(posts.id) as posts_count FROM users LEFT JOIN posts ON users.id = posts.author GROUP BY users.id"
+  }
+}
 ```
 
-### API Rules (Security)
-Each collection has 5 rules + 1 additional for Auth:
-- **listRule** - WHO can view list of records
-- **viewRule** - WHO can view single record  
-- **createRule** - WHO can create records
-- **updateRule** - WHO can update records
-- **deleteRule** - WHO can delete records
-- **manageRule** (Auth only) - WHO can fully manage auth records
+### Field Types
 
-#### Rule Values
+PocketBase supports various field types:
+
+| Type | Description | Options |
+|------|-------------|---------|
+| `text` | Single line text | `min`, `max`, `pattern` |
+| `number` | Integer or float | `min`, `max` |
+| `bool` | Boolean true/false | - |
+| `email` | Email validation | `exceptDomains`, `onlyDomains` |
+| `url` | URL validation | `exceptDomains`, `onlyDomains` |
+| `date` | Date only | `min`, `max` |
+| `select` | Single select | `values` (array) |
+| `json` | JSON data | `maxSize` |
+| `file` | File uploads | `maxSelect`, `maxSize`, `mimeTypes` |
+| `relation` | Record relations | `collectionId`, `cascadeDelete` |
+| `user` | User relation | Deprecated, use `relation` |
+| `editor` | Rich text | `convertUrls` |
+
+---
+
+## API Rules and Security
+
+API Rules control access to your data using JavaScript-like expressions.
+
+### Rule Types
+
+Each collection has 5 rule types:
+
+1. **listRule**: Controls who can list/search records
+2. **viewRule**: Controls who can view individual records  
+3. **createRule**: Controls who can create new records
+4. **updateRule**: Controls who can update existing records
+5. **deleteRule**: Controls who can delete records
+
+### Rule Context Variables
+
+| Variable | Description |
+|----------|-------------|
+| `@request.method` | HTTP method (GET, POST, etc.) |
+| `@request.query.*` | Query parameters |
+| `@request.data.*` | Request body data |
+| `@request.auth.*` | Authenticated user data |
+| `@collection.*` | Current collection data |
+
+### Example Rules
+
 ```javascript
-null             // "locked" - superusers only (default)
-""              // Empty - anyone (guests, users, superusers)
-"rule_expression" // Custom filter expression
-```
+// Public read, auth required for write
+"listRule": "",                           // Anyone can list
+"viewRule": "",                           // Anyone can view
+"createRule": "@request.auth.id != ''",   // Must be authenticated
+"updateRule": "@request.auth.id != ''",   // Must be authenticated
+"deleteRule": "@request.auth.id != ''",   // Must be authenticated
 
-#### Rule Examples
-```javascript
-// Only authenticated users
-"@request.auth.id != ''"
+// User can only manage their own records
+"listRule": "@request.auth.id != ''",
+"viewRule": "@request.auth.id != '' && author = @request.auth.id",
+"createRule": "@request.auth.id != '' && @request.data.author = @request.auth.id",
+"updateRule": "@request.auth.id != '' && author = @request.auth.id",
+"deleteRule": "@request.auth.id != '' && author = @request.auth.id",
 
-// Only record owner
-"@request.auth.id != '' && author = @request.auth.id"
+// Admin-only access
+"listRule": "@request.auth.role = 'admin'",
+"viewRule": "@request.auth.role = 'admin'",
+"createRule": "@request.auth.role = 'admin'",
+"updateRule": "@request.auth.role = 'admin'",
+"deleteRule": "@request.auth.role = 'admin'",
 
-// Role-based access
-"@request.auth.role = 'staff'"
-
-// Combined rules
-"@request.auth.id != '' && (@request.auth.role = 'staff' || author = @request.auth.id)"
-
-// Only active records
-"status = 'active'"
-
-// Nested relations
-"someRelField.anotherRelField.author = @request.auth.id"
-```
-
-#### Available Fields in Rules
-```javascript
-// Collection schema fields (including nested relations)
-someRelField.status != "pending"
-
-// Request context
-@request.context     // default, oauth2, otp, password, realtime, protectedFile
-@request.method      // GET, POST, PUT, DELETE
-@request.headers.*   // Request headers
-@request.query.*     // Query parameters  
-@request.body.*      // Request body fields
-@request.auth.*      // Current authenticated user
-
-// Cross-collection queries
-@collection.news.categoryId ?= categoryId
-@collection.news.author ?= @request.auth.id
+// Complex conditions
+"listRule": "@request.auth.id != '' && (status = 'published' || author = @request.auth.id)",
+"createRule": "@request.auth.verified = true && @request.data.title != ''",
+"updateRule": "@request.auth.id != '' && author = @request.auth.id && @request.data.title != ''"
 ```
 
 ---
 
-## Client-Side Integration
+## JavaScript SDK
 
-### JavaScript SDK
+The PocketBase JavaScript SDK provides a convenient way to interact with your PocketBase instance.
 
-#### Installation
+### Installation
+
 ```bash
+# npm
 npm install pocketbase
-# or
-import PocketBase from 'https://cdn.jsdelivr.net/gh/pocketbase/js-sdk@master/dist/pocketbase.es.mjs'
+
+# yarn  
+yarn add pocketbase
+
+# CDN
+<script type="module">
+import PocketBase from 'https://cdn.skypack.dev/pocketbase'
+</script>
 ```
 
-#### Basic Setup
+### Basic Usage
+
 ```javascript
 import PocketBase from 'pocketbase';
 
 const pb = new PocketBase('http://127.0.0.1:8090');
-
-// Enable auto cancellation for duplicated requests
-pb.autoCancellation(false);
 ```
 
-### Authentication
+### Configuration Options
 
-#### Password Authentication
 ```javascript
-// Auth with email/password
-const authData = await pb.collection('users').authWithPassword(
-    'user@example.com', 
-    'password123'
-);
-
-// Access auth data
-console.log(pb.authStore.isValid);
-console.log(pb.authStore.token);
-console.log(pb.authStore.record.id);
-
-// Logout (clear local state)
-pb.authStore.clear();
-```
-
-#### OAuth2 Authentication
-```javascript
-// Initialize OAuth2 flow
-const authData = await pb.collection('users').authWithOAuth2({
-    provider: 'google' // google, facebook, github, etc.
-});
-
-// Callback URL must be: https://yourdomain.com/api/oauth2-redirect
-```
-
-#### OTP (One-Time Password)
-```javascript
-// Request OTP email
-const result = await pb.collection('users').requestOTP('user@example.com');
-
-// Verify OTP
-const authData = await pb.collection('users').authWithOTP(
-    result.otpId, 
-    '123456' // Code from email
-);
-```
-
-#### Multi-Factor Authentication
-```javascript
-try {
-    await pb.collection('users').authWithPassword('user@example.com', 'password');
-} catch (e) {
-    const mfaId = e.response['mfaId'];
-    if (mfaId) {
-        // MFA required - request OTP
-        const result = await pb.collection('users').requestOTP('user@example.com');
-        await pb.collection('users').authWithOTP(result.otpId, 'EMAIL_CODE', {
-            query: { 'mfaId': mfaId }
-        });
+const pb = new PocketBase('http://127.0.0.1:8090', {
+    // optional default fetch options
+    headers: {
+        'Custom-Header': 'value'
+    },
+    // custom fetch function
+    fetch: async (url, config) => {
+        return nativeFetch(url, config);
     }
-}
+});
 ```
 
-### CRUD Operations
+---
 
-#### Create Record
+## Authentication
+
+PocketBase supports multiple authentication methods for auth collections.
+
+### Password Authentication
+
 ```javascript
+// Register new user
+const userData = {
+    "email": "test@example.com",
+    "password": "12345678",
+    "passwordConfirm": "12345678", 
+    "name": "John Doe"
+};
+
+const user = await pb.collection('users').create(userData);
+
+// Login with email/password
+const authData = await pb.collection('users').authWithPassword('test@example.com', '12345678');
+
+console.log(pb.authStore.isValid);     // true
+console.log(pb.authStore.token);       // JWT token
+console.log(pb.authStore.model.id);    // User record data
+```
+
+### OAuth2 Authentication
+
+```javascript
+// Authenticate with OAuth2 provider
+const authData = await pb.collection('users').authWithOAuth2('google');
+
+// Available providers include:
+// google, facebook, github, gitlab, discord, twitter,
+// microsoft, spotify, kakao, twitch, strava, gitee, livechat
+```
+
+### Authentication Management
+
+```javascript
+// Check if authenticated
+console.log(pb.authStore.isValid);
+
+// Get current user
+console.log(pb.authStore.model);
+
+// Refresh authentication  
+await pb.collection('users').authRefresh();
+
+// Logout
+pb.authStore.clear();
+
+// Auth store change listener
+pb.authStore.onChange((token, model) => {
+    console.log('auth changed', token, model);
+});
+```
+
+### Email Verification
+
+```javascript
+// Request verification email
+await pb.collection('users').requestVerification('test@example.com');
+
+// Confirm verification
+await pb.collection('users').confirmVerification('VERIFICATION_TOKEN');
+```
+
+### Password Reset
+
+```javascript
+// Request password reset
+await pb.collection('users').requestPasswordReset('test@example.com');
+
+// Confirm password reset
+await pb.collection('users').confirmPasswordReset(
+    'PASSWORD_RESET_TOKEN',
+    'NEW_PASSWORD',
+    'NEW_PASSWORD_CONFIRM'
+);
+```
+
+---
+
+## CRUD Operations
+
+### Create Records
+
+```javascript
+// Simple create
 const record = await pb.collection('posts').create({
-    title: 'Hello world!',
-    content: 'Lorem ipsum...',
-    status: 'active'
-});
-```
-
-#### List Records
-```javascript
-// Paginated list
-const resultList = await pb.collection('posts').getList(1, 20, {
-    filter: 'status = "active" && created >= "2023-01-01"',
-    sort: '-created',
-    expand: 'author,category'
+    "title": "Hello World",
+    "content": "This is my first post"
 });
 
-// Get all records
-const records = await pb.collection('posts').getFullList({
-    sort: '-created'
-});
-
-// Get first matching record
-const record = await pb.collection('posts').getFirstListItem('status="active"');
-```
-
-#### Get Single Record
-```javascript
-const record = await pb.collection('posts').getOne('RECORD_ID', {
-    expand: 'author,category'
-});
-```
-
-#### Update Record
-```javascript
-const record = await pb.collection('posts').update('RECORD_ID', {
-    title: 'Updated title',
-    content: 'Updated content'
-});
-```
-
-#### Delete Record
-```javascript
-await pb.collection('posts').delete('RECORD_ID');
-```
-
-### File Upload & Management
-
-#### Upload Files
-```javascript
+// Create with file upload
 const formData = new FormData();
-formData.append('title', 'Hello world!');
-formData.append('avatar', fileInput.files[0]);
-formData.append('gallery', fileInput.files[1]);
-formData.append('gallery', fileInput.files[2]);
+formData.append('title', 'Post with image');
+formData.append('content', 'Content here');
+formData.append('featured_image', fileInput.files[0]);
 
 const record = await pb.collection('posts').create(formData);
 ```
 
-#### File URLs
+### Read Records
+
+```javascript
+// Get single record by ID
+const record = await pb.collection('posts').getOne('RECORD_ID');
+
+// Get single record with query options
+const record = await pb.collection('posts').getOne('RECORD_ID', {
+    expand: 'author,category',
+    fields: 'id,title,content,expand.author.name'
+});
+
+// List records with pagination
+const resultList = await pb.collection('posts').getList(1, 20, {
+    filter: 'status = "published" && created >= "2023-01-01"',
+    sort: '-created,title',
+    expand: 'author',
+    fields: 'id,title,author,expand.author.name'
+});
+
+console.log(resultList.page);        // Current page
+console.log(resultList.perPage);     // Records per page  
+console.log(resultList.totalItems);  // Total records
+console.log(resultList.totalPages);  // Total pages
+console.log(resultList.items);       // Array of records
+
+// Get all records (auto-pagination)
+const records = await pb.collection('posts').getFullList({
+    sort: '-created',
+    filter: 'status = "published"'
+});
+
+// Get first record matching filter
+const record = await pb.collection('posts').getFirstListItem('title="Hello World"');
+```
+
+### Update Records
+
+```javascript
+// Simple update
+const record = await pb.collection('posts').update('RECORD_ID', {
+    "title": "Updated title",
+    "status": "published"
+});
+
+// Update with file upload
+const formData = new FormData();
+formData.append('title', 'Updated title');
+formData.append('featured_image', newFileInput.files[0]);
+
+const record = await pb.collection('posts').update('RECORD_ID', formData);
+
+// Partial update (only changed fields)
+const record = await pb.collection('posts').update('RECORD_ID', {
+    "status": "archived"
+});
+```
+
+### Delete Records
+
+```javascript
+// Delete single record
+await pb.collection('posts').delete('RECORD_ID');
+
+// Delete with confirmation
+const confirmed = confirm('Are you sure?');
+if (confirmed) {
+    await pb.collection('posts').delete('RECORD_ID');
+}
+```
+
+### Query Options
+
+All read operations support these query options:
+
+```javascript
+const options = {
+    // Expand relations
+    expand: 'author,category,comments(limit:10)',
+    
+    // Select specific fields
+    fields: 'id,title,content,expand.author.name',
+    
+    // Filter records (supports various operators)
+    filter: 'status = "published" && created >= "2023-01-01" && author.verified = true',
+    
+    // Sort records (- for descending)
+    sort: '-created,title,author.name',
+    
+    // Pagination
+    page: 1,
+    perPage: 20,
+    
+    // Skip total count (faster for large datasets)
+    skipTotal: true,
+    
+    // Custom headers
+    headers: {
+        'X-Custom': 'value'
+    },
+    
+    // Request key for auto-cancellation
+    requestKey: 'unique-request-id'
+};
+```
+
+### Filter Operators
+
+```javascript
+// Comparison operators
+'age > 18'                    // Greater than
+'age >= 18'                   // Greater than or equal
+'age < 65'                    // Less than  
+'age <= 65'                   // Less than or equal
+'status = "active"'           // Equal
+'status != "inactive"'        // Not equal
+
+// Text operators  
+'title ~ "hello"'             // Contains (case insensitive)
+'title !~ "spam"'             // Doesn't contain
+'email ?= "example.com"'      // Ends with
+'name ?~ "john"'              // Like (case insensitive)
+
+// Array/relation operators
+'tags:each ~ "javascript"'    // Each array item contains
+'categories.id ?= "cat1"'     // Related record field
+'author.verified = true'      // Expanded relation field
+
+// Logical operators
+'status = "active" && age > 18'                    // AND
+'type = "premium" || type = "gold"'                // OR  
+'!(status = "banned" || status = "suspended")'     // NOT
+
+// Date/time
+'created >= "2023-01-01"'                         // Date comparison
+'updated > "2023-01-01 10:00:00"'                 // DateTime comparison
+'created >= @now'                                 // Current time
+'created >= @todayStart'                          // Today start
+'created >= @monthStart'                          // Month start
+
+// Complex examples
+'(status = "published" && featured = true) || (status = "featured")'
+'tags:each ~ "react" && author.verified = true && created >= "2023-01-01"'
+'title ~ @request.query.search || content ~ @request.query.search'
+```
+
+---
+
+## File Management
+
+PocketBase handles file uploads and provides convenient methods for file operations.
+
+### File Upload
+
+```javascript
+// Single file upload
+const formData = new FormData();
+formData.append('title', 'My document');
+formData.append('document', fileInput.files[0]);
+
+const record = await pb.collection('documents').create(formData);
+
+// Multiple file upload (if field allows multiple)
+const formData = new FormData();
+formData.append('title', 'Photo gallery');
+for (let file of fileInput.files) {
+    formData.append('photos', file);
+}
+
+const record = await pb.collection('galleries').create(formData);
+
+// Update with new file
+const formData = new FormData();
+formData.append('title', 'Updated title');
+formData.append('document', newFileInput.files[0]);
+
+const record = await pb.collection('documents').update('RECORD_ID', formData);
+```
+
+### File URLs
+
 ```javascript
 // Get file URL
-const url = pb.files.getUrl(record, 'avatar');
-// → http://127.0.0.1:8090/api/files/posts/RECORD_ID/avatar.jpg
+const record = await pb.collection('documents').getOne('RECORD_ID');
+const fileUrl = pb.files.getUrl(record, 'document');
 
-// With query params (thumb)
-const thumbUrl = pb.files.getUrl(record, 'avatar', {'thumb': '100x250'});
+// Example: http://127.0.0.1:8090/api/files/documents/RECORD_ID/filename.pdf
+
+// File URL with thumb (for images)
+const thumbUrl = pb.files.getUrl(record, 'photo', {'thumb': '100x100'});
+
+// Custom query parameters
+const fileUrl = pb.files.getUrl(record, 'document', {
+    'download': 1,                    // Force download
+    'token': pb.authStore.token       // Auth token for protected files
+});
 ```
 
-#### Protected Files
-```javascript
-// Generate file token for protected files
-const fileToken = await pb.files.getToken();
+### File Field Configuration
 
-// Use token in URL
-const protectedUrl = `${pb.files.getUrl(record, 'document')}?token=${fileToken}`;
+```javascript
+// File field options in collection schema
+{
+    "name": "attachments", 
+    "type": "file",
+    "options": {
+        "maxSelect": 5,                           // Max number of files
+        "maxSize": 5242880,                       // Max size per file (5MB)
+        "mimeTypes": [                            // Allowed file types
+            "image/jpeg",
+            "image/png", 
+            "application/pdf",
+            "text/plain"
+        ],
+        "thumbs": [                               // Image thumbnail sizes
+            "100x100",
+            "200x200", 
+            "300x300f"                            // f = fit, t = top, b = bottom
+        ]
+    }
+}
 ```
 
-### Realtime Subscriptions
+### File Deletion
 
-#### Subscribe to Changes
 ```javascript
-// Subscribe to all records in collection
+// Files are automatically deleted when:
+// 1. The record is deleted
+// 2. The file field is updated/cleared  
+// 3. The record is updated with new files (old files are removed)
+
+// Clear file field
+await pb.collection('documents').update('RECORD_ID', {
+    "document": null  // or empty string ""
+});
+
+// Update with new file (old file will be deleted)
+const formData = new FormData();
+formData.append('document', newFile);
+await pb.collection('documents').update('RECORD_ID', formData);
+```
+
+---
+
+## Realtime Subscriptions
+
+PocketBase supports realtime updates via Server-Sent Events (SSE) and WebSocket.
+
+### Basic Subscription
+
+```javascript
+// Subscribe to all changes in a collection
 pb.collection('posts').subscribe('*', function (e) {
-    console.log(e.action); // 'create', 'update', 'delete'
-    console.log(e.record);
+    console.log(e.action);    // create, update, delete
+    console.log(e.record);    // the changed record
 });
 
 // Subscribe to specific record
 pb.collection('posts').subscribe('RECORD_ID', function (e) {
-    console.log(e.action);
-    console.log(e.record);
+    console.log('Record updated:', e.record);
 });
 
-// With options
+// Subscribe with options
 pb.collection('posts').subscribe('*', function (e) {
-    console.log(e.record);
+    console.log(e.action, e.record);
 }, {
     expand: 'author,category',
-    filter: 'status = "active"'
+    fields: 'id,title,content,expand.author.name',
+    headers: {
+        'X-Custom': 'value'
+    }
 });
 ```
 
-#### Unsubscribe
+### Advanced Subscription Examples
+
 ```javascript
-// Remove specific subscription
+// Multiple subscriptions
+pb.collection('posts').subscribe('*', handlePostChanges);
+pb.collection('comments').subscribe('*', handleCommentChanges);
+pb.collection('users').subscribe(currentUserId, handleUserChanges);
+
+// Subscription with error handling
+pb.collection('posts').subscribe('*', function (e) {
+    try {
+        updateUI(e.record);
+    } catch (error) {
+        console.error('Failed to update UI:', error);
+    }
+}).catch(error => {
+    console.error('Subscription failed:', error);
+});
+
+// Conditional subscription
+if (pb.authStore.isValid) {
+    pb.collection('notifications').subscribe('*', function (e) {
+        if (e.record.user === pb.authStore.model.id) {
+            showNotification(e.record);
+        }
+    });
+}
+```
+
+### Unsubscribe
+
+```javascript
+// Unsubscribe from specific record
 pb.collection('posts').unsubscribe('RECORD_ID');
 
-// Remove all subscriptions for topic
+// Unsubscribe from all changes in collection
 pb.collection('posts').unsubscribe('*');
 
-// Remove all subscriptions in collection
+// Unsubscribe from everything
 pb.collection('posts').unsubscribe();
+
+// Store subscription for later cleanup
+const unsubscribe = pb.collection('posts').subscribe('*', handleChanges);
+
+// Later...
+unsubscribe();
 ```
 
-### Query Filtering & Sorting
+### Subscription Events
 
-#### Filter Operators
 ```javascript
-// Comparison
-filter: 'status = "active"'
-filter: 'created >= "2023-01-01"'
-filter: 'score > 100'
-filter: 'title != ""'
+// Event object structure
+{
+    "action": "create",        // create, update, delete
+    "record": {                // the changed record data
+        "id": "RECORD_ID",
+        "title": "Hello World",
+        "created": "2023-01-01 12:00:00",
+        "updated": "2023-01-01 12:00:00",
+        // ... other fields
+    }
+}
 
-// Text matching
-filter: 'title ~ "hello"'        // Contains
-filter: 'title !~ "spam"'        // Not contains  
-filter: 'email ?= "test@"'       // Optional equal (if field exists)
-
-// Arrays/Relations
-filter: 'tags.name ?= "javascript"'
-filter: 'categories:each ~ "tech"'
-
-// Logical operators
-filter: 'status = "active" && created >= "2023-01-01"'
-filter: 'status = "draft" || author = @request.auth.id'
-
-// Null/empty checks
-filter: 'description != ""'
-filter: 'avatar != ""'
-filter: 'publishedDate != ""'
+// Handling different actions
+pb.collection('posts').subscribe('*', function (e) {
+    switch (e.action) {
+        case 'create':
+            addPostToList(e.record);
+            break;
+        case 'update':
+            updatePostInList(e.record);
+            break;
+        case 'delete':
+            removePostFromList(e.record);
+            break;
+    }
+});
 ```
 
-#### Sorting
-```javascript
-sort: 'created'          // Ascending
-sort: '-created'         // Descending  
-sort: '+title,-created'  // Multiple fields
-```
+### Connection Management
 
-#### Expand (Populate Relations)
 ```javascript
-expand: 'author'                    // Single relation
-expand: 'author,category'           // Multiple relations
-expand: 'author.avatar'             // Nested relations
-expand: 'comments(created>=2023)'   // With filter
-expand: 'posts.author.avatar'       // Deep nested
+// Check realtime connection status
+console.log(pb.realtime.isConnected);
+
+// Connection event listeners
+pb.realtime.subscribe('PB_CONNECT', function () {
+    console.log('Connected to realtime');
+});
+
+pb.realtime.subscribe('PB_DISCONNECT', function () {
+    console.log('Disconnected from realtime');
+});
+
+// Manual connection control
+await pb.realtime.subscribe('posts', '*', handleChanges);
+pb.realtime.unsubscribe();  // Disconnect from all subscriptions
 ```
 
 ---
 
-## Server-Side Extension (JavaScript)
+## Server-side JavaScript (JSVM)
 
-### JavaScript VM Environment
+PocketBase supports server-side JavaScript execution through its JavaScript Virtual Machine (JSVM). This allows you to extend PocketBase with custom logic, API endpoints, and event handlers.
 
-PocketBase v0.17+ includes an embedded ES5 JavaScript engine (goja) for server-side scripting.
+### Setup
 
-#### File Structure
+1. Create a `pb_hooks` directory in your PocketBase root
+2. Add `.pb.js` files to define your server-side logic
+3. PocketBase automatically loads and executes these files on startup
+
 ```
-pb_hooks/
-├── main.pb.js          # Main hooks file
-├── routes.pb.js        # Custom routes
-├── cron.pb.js          # Scheduled tasks
-├── utils.pb.js         # Utility functions
-└── migrations/         # Custom migrations
-    ├── init.pb.js
-    └── seed_data.pb.js
+your-app/
+├── pocketbase
+├── pb_data/
+└── pb_hooks/              # Server-side JavaScript files
+    ├── main.pb.js         # Main hooks
+    ├── auth.pb.js         # Authentication hooks  
+    └── api.pb.js          # Custom API routes
 ```
 
-#### Environment Limitations
-- **ES5 JavaScript engine** (goja) - not Node.js or browser
-- **No ES6 modules** (import/export) - use CommonJS (require/module.exports)
-- **No setTimeout/setInterval** - no concurrent execution in handlers
-- **No window, fs, fetch, buffer** - only ES5 spec + PocketBase globals
-- **No npm packages** without bundling/transpiling first
+### JavaScript Environment
 
-#### Module Loading
+- **Engine**: Goja (ES5+ JavaScript)
+- **Execution**: Isolated contexts per handler
+- **Performance**: Pool of 15 runtimes (configurable with `--hooksPool`)
+- **Modules**: CommonJS-style require() support
+
+### Custom API Routes
+
 ```javascript
-// Load local modules (CommonJS only)
-const utils = require('./utils.pb.js')
-const helpers = require('../shared/helpers.js')
+// pb_hooks/api.pb.js
 
-// Load from node_modules (if present)
-const lodash = require('lodash')
-const dayjs = require('dayjs')
-```
-
-### Event Hooks
-
-#### Record Hooks
-```javascript
-// Before record operations
-onRecordBeforeCreateRequest((e) => {
-    // e.app, e.collection, e.record, e.uploadedFiles
-    // Validate or modify data before creation
-    e.next();
-}, "users");
-
-onRecordBeforeUpdateRequest((e) => {
-    // Validate or modify data before update
-    e.next();
-}, "posts");
-
-// After record operations  
-onRecordAfterCreateRequest((e) => {
-    // Send welcome email, trigger notifications, etc.
-    e.next();
-}, "users");
-
-onRecordAfterDeleteRequest((e) => {
-    // Cleanup related data
-    e.next();
-}, "posts");
-```
-
-### Complete Hook Reference
-
-#### All Available Hooks
-
-**Application Lifecycle**
-```javascript
-onBootstrap((e) => {}) // App initialization
-onTerminate((e) => {}) // App shutdown
-onSettingsReload((e) => {}) // Settings changed
-```
-
-**Backup Operations**  
-```javascript
-onBackupCreate((e) => {}) // Before backup creation
-onBackupRestore((e) => {}) // Before backup restore
-```
-
-**Collection Hooks**
-```javascript
-// Model-level (triggered anywhere)
-onCollectionCreate((e) => {})
-onCollectionUpdate((e) => {})  
-onCollectionDelete((e) => {})
-onCollectionValidate((e) => {})
-
-// Request-level (API only)
-onCollectionCreateRequest((e) => {})
-onCollectionUpdateRequest((e) => {})
-onCollectionDeleteRequest((e) => {})
-onCollectionViewRequest((e) => {})
-onCollectionsListRequest((e) => {})
-onCollectionsImportRequest((e) => {})
-
-// Success/Error callbacks
-onCollectionAfterCreateSuccess((e) => {})
-onCollectionAfterCreateError((e) => {})
-onCollectionAfterUpdateSuccess((e) => {})
-onCollectionAfterUpdateError((e) => {})
-onCollectionAfterDeleteSuccess((e) => {})
-onCollectionAfterDeleteError((e) => {})
-```
-
-**Record Hooks**
-```javascript
-// Model-level (triggered anywhere) 
-onRecordCreate((e) => {})
-onRecordUpdate((e) => {})
-onRecordDelete((e) => {})
-onRecordValidate((e) => {})
-
-// Request-level (API only)
-onRecordCreateRequest((e) => {})
-onRecordUpdateRequest((e) => {})
-onRecordDeleteRequest((e) => {})
-onRecordViewRequest((e) => {})
-onRecordsListRequest((e) => {})
-
-// Before request hooks
-onRecordBeforeCreateRequest((e) => {})
-onRecordBeforeUpdateRequest((e) => {})
-onRecordBeforeDeleteRequest((e) => {})
-
-// After request hooks  
-onRecordAfterCreateRequest((e) => {})
-onRecordAfterUpdateRequest((e) => {})
-onRecordAfterDeleteRequest((e) => {})
-
-// Success/Error callbacks
-onRecordAfterCreateSuccess((e) => {})
-onRecordAfterCreateError((e) => {})
-onRecordAfterUpdateSuccess((e) => {})
-onRecordAfterUpdateError((e) => {})
-onRecordAfterDeleteSuccess((e) => {})
-onRecordAfterDeleteError((e) => {})
-
-// Special hooks
-onRecordEnrich((e) => {}) // Add custom fields to responses
-```
-
-**Authentication Hooks**
-```javascript
-onRecordAuthRequest((e) => {}) // After successful auth
-onRecordAuthRefreshRequest((e) => {}) // Token refresh
-onRecordAuthWithPasswordRequest((e) => {}) // Password auth
-onRecordAuthWithOAuth2Request((e) => {}) // OAuth2 auth
-onRecordAuthWithOTPRequest((e) => {}) // OTP auth
-
-// Email-related auth
-onRecordRequestVerificationRequest((e) => {}) // Email verification request
-onRecordConfirmVerificationRequest((e) => {}) // Email verification confirm
-onRecordRequestPasswordResetRequest((e) => {}) // Password reset request
-onRecordConfirmPasswordResetRequest((e) => {}) // Password reset confirm
-onRecordRequestEmailChangeRequest((e) => {}) // Email change request
-onRecordConfirmEmailChangeRequest((e) => {}) // Email change confirm
-onRecordRequestOTPRequest((e) => {}) // OTP request
-```
-
-**File Hooks**
-```javascript
-onFileDownloadRequest((e) => {}) // File download
-onFileTokenRequest((e) => {}) // Protected file token
-```
-
-**Realtime Hooks**
-```javascript
-onRealtimeConnectRequest((e) => {}) // New connection
-onRealtimeSubscribeRequest((e) => {}) // Subscription change
-onRealtimeMessageSend((e) => {}) // Message broadcast
-```
-
-**Mail Hooks**
-```javascript
-onMailerSend((e) => {}) // All outgoing emails
-onMailerRecordVerificationSend((e) => {}) // Verification emails
-onMailerRecordPasswordResetSend((e) => {}) // Password reset emails  
-onMailerRecordEmailChangeSend((e) => {}) // Email change emails
-onMailerRecordAuthAlertSend((e) => {}) // Login alert emails
-onMailerRecordOTPSend((e) => {}) // OTP emails
-```
-
-**Settings Hooks**
-```javascript
-onSettingsListRequest((e) => {}) // Settings view
-onSettingsUpdateRequest((e) => {}) // Settings update
-```
-
-**Batch Operations**
-```javascript
-onBatchRequest((e) => {}) // Batch API requests
-```
-
-#### Mail Hooks
-```javascript
-onMailerSend((e) => {
-    // Intercept all outgoing emails
-    // e.app, e.mailer, e.message
-    e.message.subject = "Custom: " + e.message.subject;
-    e.next();
+// Simple GET route
+routerAdd("GET", "/api/hello", (e) => {
+    return e.json(200, {"message": "Hello from PocketBase!"});
 });
 
-onMailerRecordPasswordResetSend((e) => {
-    // Customize password reset emails
-    e.next();
-});
-```
-
-#### Realtime Hooks
-```javascript
-onRealtimeConnectRequest((e) => {
-    // New realtime connection
-    e.next();
+// Route with path parameters
+routerAdd("GET", "/api/hello/{name}", (e) => {
+    const name = e.request.pathValue("name");
+    return e.json(200, {"message": `Hello ${name}!`});
 });
 
-onRealtimeSubscribeRequest((e) => {
-    // Validate subscription requests
-    e.next();
-});
-```
-
-### Custom Routes
-```javascript
-routerAdd("GET", "/hello/{name}", (c) => {
-    const name = c.pathParam("name");
-    return c.json(200, { "message": `Hello ${name}!` });
-});
-
-routerAdd("POST", "/custom-action", (c) => {
-    const data = $apis.requestInfo(c).data;
-    
-    // Your custom logic here
-    
-    return c.json(200, { "result": "success" });
-});
-```
-
-### Database Operations
-```javascript
-// Find records
-const records = $app.findRecordsByFilter("posts", 'status = "active"');
-const record = $app.findRecordById("posts", "RECORD_ID");
-
-// Create record
-const collection = $app.findCollectionByNameOrId("posts");
-const record = new Record(collection, {
-    "title": "New post",
-    "content": "Content here"
-});
-$app.save(record);
-
-// Update record
-record.set("title", "Updated title");
-$app.save(record);
-
-// Delete record
-$app.delete(record);
-```
-
-### Sending Emails
-```javascript
-onRecordAfterCreateRequest((e) => {
-    const message = new MailerMessage({
-        from: {
-            address: e.app.settings().meta.senderAddress,
-            name: e.app.settings().meta.senderName,
-        },
-        to: [{address: e.record.email()}],
-        subject: "Welcome!",
-        html: `<h1>Welcome ${e.record.get("name")}!</h1>`,
+// POST route with JSON body
+routerAdd("POST", "/api/contact", (e) => {
+    const data = new DynamicModel({
+        name: "",
+        email: "",
+        message: ""
     });
     
-    e.app.newMailClient().send(message);
+    e.bindBody(data);
+    
+    // Validate data
+    if (!data.name || !data.email) {
+        throw new BadRequestError("Name and email are required");
+    }
+    
+    // Process the contact form
+    sendContactEmail(data);
+    
+    return e.json(200, {"success": true});
+});
+
+// Protected route requiring authentication
+routerAdd("GET", "/api/profile", (e) => {
+    $apis.requireAuth()(e);
+    
+    const info = $apis.requestInfo(e);
+    const user = info.authRecord;
+    
+    return e.json(200, {
+        "id": user.id,
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "verified": user.get("verified")
+    });
+});
+
+// File upload endpoint
+routerAdd("POST", "/api/upload", (e) => {
+    $apis.requireAuth()(e);
+    
+    const info = $apis.requestInfo(e);
+    const form = e.request.formValue();
+    
+    // Handle file upload logic
+    const file = form.file;
+    
+    if (!file) {
+        throw new BadRequestError("No file provided");
+    }
+    
+    return e.json(200, {
+        "filename": file.name,
+        "size": file.size,
+        "uploaded": true
+    });
+});
+```
+
+### Database Hooks
+
+```javascript
+// pb_hooks/main.pb.js
+
+// Before record creation
+onRecordBeforeCreateRequest((e) => {
+    console.log("Creating record in:", e.record.collection().name);
+    
+    // Add audit fields
+    e.record.set("created_by", e.requestInfo.authRecord?.id || null);
+    e.record.set("created_ip", e.request.header("X-Forwarded-For") || e.request.remoteAddr);
+    
+    e.next();
+}, "posts", "comments");
+
+// After successful record creation
+onRecordAfterCreateSuccess((e) => {
+    const record = e.record;
+    
+    // Send notification
+    if (record.collection().name === "comments") {
+        notifyPostAuthor(record);
+    }
+    
+    // Update statistics
+    updateCollectionStats(record.collection().name);
+    
+    e.next();
+});
+
+// Before record update
+onRecordBeforeUpdateRequest((e) => {
+    const record = e.record;
+    
+    // Audit trail
+    record.set("updated_by", e.requestInfo.authRecord?.id);
+    record.set("updated_at", new Date().toISOString());
+    
+    // Prevent status changes by non-admins
+    if (record.hasChangedFields("status")) {
+        const user = e.requestInfo.authRecord;
+        if (!user || user.get("role") !== "admin") {
+            throw new ForbiddenError("Only admins can change status");
+        }
+    }
+    
+    e.next();
+}, "posts");
+
+// Before record deletion  
+onRecordBeforeDeleteRequest((e) => {
+    const record = e.record;
+    
+    // Prevent deletion of protected records
+    if (record.get("protected") === true) {
+        throw new BadRequestError("Cannot delete protected records");
+    }
+    
+    // Cascade delete related records
+    if (record.collection().name === "users") {
+        const userPosts = $app.dao().findRecordsByFilter("posts", `author = "${record.id}"`);
+        userPosts.forEach(post => {
+            $app.dao().deleteRecord(post);
+        });
+    }
+    
+    e.next();
+});
+```
+
+### Authentication Hooks
+
+```javascript
+// pb_hooks/auth.pb.js
+
+// Before authentication attempt
+onRecordBeforeAuthWithPasswordRequest((e) => {
+    const email = e.record.get("email");
+    
+    // Rate limiting
+    if (isRateLimited(email)) {
+        throw new BadRequestError("Too many login attempts. Try again later.");
+    }
+    
+    // Log login attempt
+    console.log(`Login attempt: ${email} from ${e.request.remoteAddr}`);
+    
+    e.next();
+}, "users");
+
+// After successful authentication
+onRecordAfterAuthWithPasswordSuccess((e) => {
+    const user = e.record;
+    
+    // Update last login
+    user.set("last_login", new Date().toISOString());
+    user.set("login_count", (user.get("login_count") || 0) + 1);
+    
+    $app.dao().saveRecord(user);
+    
+    // Clear failed login attempts
+    clearFailedAttempts(user.get("email"));
+    
+    e.next();
+}, "users");
+
+// OAuth2 authentication
+onRecordAfterAuthWithOAuth2Success((e) => {
+    const user = e.record;
+    const provider = e.providerName;
+    
+    console.log(`OAuth2 login: ${user.get("email")} via ${provider}`);
+    
+    // Update OAuth2 info
+    user.set("oauth2_provider", provider);
+    user.set("last_oauth2_login", new Date().toISOString());
+    
+    $app.dao().saveRecord(user);
+    
     e.next();
 }, "users");
 ```
 
-### Realtime Messaging
+### Email Hooks
+
 ```javascript
-// Send custom realtime message
-const message = new SubscriptionMessage({
-    name: "custom_event",
-    data: JSON.stringify({
-        type: "notification",
-        message: "Something happened!"
-    }),
+// pb_hooks/mail.pb.js
+
+// Customize verification email
+onMailerRecordVerificationSend((e) => {
+    const user = e.record;
+    const actionUrl = e.meta.actionUrl;
+    
+    e.message.subject = "Welcome! Please verify your email";
+    e.message.html = `
+        <h1>Welcome ${user.get("name")}!</h1>
+        <p>Please click the link below to verify your email address:</p>
+        <a href="${actionUrl}">Verify Email</a>
+        <p>If you didn't create an account, please ignore this email.</p>
+    `;
+    
+    e.next();
 });
 
-const clients = $app.subscriptionsBroker().clients();
-for (let clientId in clients) {
-    if (clients[clientId].hasSubscription("notifications")) {
-        clients[clientId].send(message);
-    }
+// Customize password reset email
+onMailerRecordPasswordResetSend((e) => {
+    const user = e.record;
+    const actionUrl = e.meta.actionUrl;
+    
+    e.message.subject = "Reset your password";
+    e.message.html = `
+        <h1>Password Reset Request</h1>
+        <p>Hi ${user.get("name")},</p>
+        <p>Click the link below to reset your password:</p>
+        <a href="${actionUrl}">Reset Password</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+    `;
+    
+    e.next();
+});
+
+// Before sending any email
+onMailerSend((e) => {
+    // Add custom headers
+    e.message.headers["Reply-To"] = "noreply@yourdomain.com";
+    e.message.headers["X-Mailer"] = "PocketBase";
+    
+    // Log all outgoing emails
+    console.log(`Sending email to: ${e.message.to.join(", ")}`);
+    console.log(`Subject: ${e.message.subject}`);
+    
+    e.next();
+});
+```
+
+### Database Operations (DAO)
+
+```javascript
+// pb_hooks/database.pb.js
+
+// Finding records
+function getUserPosts(userId) {
+    // Find by filter
+    const posts = $app.dao().findRecordsByFilter(
+        "posts", 
+        `author = "${userId}" && status = "published"`,
+        "created DESC",
+        10,  // limit
+        0    // offset
+    );
+    
+    return posts;
 }
-```
 
-### Available Globals & JSVM APIs
+// Creating records
+function createNotification(userId, message) {
+    const collection = $app.dao().findCollectionByNameOrId("notifications");
+    const record = new Record(collection, {
+        "user": userId,
+        "message": message,
+        "read": false,
+        "created": new Date().toISOString()
+    });
+    
+    $app.dao().saveRecord(record);
+    return record;
+}
 
-The PocketBase JavaScript VM provides extensive built-in globals and APIs:
+// Updating records
+function markAsRead(notificationId) {
+    const record = $app.dao().findRecordById("notifications", notificationId);
+    record.set("read", true);
+    record.set("read_at", new Date().toISOString());
+    
+    $app.dao().saveRecord(record);
+}
 
-#### Core Application APIs
-```javascript
-$app           // PocketBase app instance
-$apis          // API utilities and middleware  
-$security      // Security utilities (JWT, encryption, random strings)
-$template      // Template rendering
-$mails         // Mail utilities
-$filesystem    // File operations
-$forms         // Form validation
-$dbx           // Database utilities
-$os            // OS operations
-$http          // HTTP client utilities
-$filepath      // File path utilities
-__hooks        // Hooks directory path
-```
-
-#### $app - Core Application Methods
-```javascript
-// Database operations
-$app.findRecordById("collection", "id")
-$app.findRecordsByFilter("collection", "filter", "-created", 50)
-$app.findCollectionByNameOrId("collection")
-$app.findFirstRecordByFilter("collection", "filter")
-
-// Save operations
-$app.save(record)
-$app.delete(record)
-$app.saveCollection(collection)
-
-// Auth operations
-$app.createAuthRecord("collection", {email: "...", password: "..."})
-$app.canAccessRecord(record, requestInfo, rule)
-
-// Expand relations
-$app.expandRecord(record, "relation1,relation2")
-$app.expandRecords([record1, record2], "relation1,relation2")
-
-// Settings
-$app.settings()
-$app.encryptionEnv() // Gets encryption env key name
-
-// Database access
-$app.db() // Direct database access
-$app.auxDb() // Auxiliary database access
-```
-
-#### $apis - API Utilities & Middleware
-```javascript
-// Request info
-$apis.requestInfo(c) // Gets RequestInfo from context
-$apis.staticDirectoryHandler(dir, indexFallback) // Static file handler
-
-// Auth middleware
-$apis.requireAuth() // Any auth collection
-$apis.requireAuth("users", "managers") // Specific collections only
-$apis.requireSuperuserAuth() // Superuser only
-
-// Response helpers
-$apis.recordAuthResponse(e, authRecord, authMethod, meta) // Standard auth response
-$apis.enrichRecord(requestInfo, collection, record, rule) // Enrich record data
-$apis.enrichRecords(requestInfo, collection, records, rule) // Enrich multiple records
-
-// Error responses
-$apis.newBadRequestError(message, data)
-$apis.newForbiddenError(message, data)
-$apis.newNotFoundError(message, data)
-$apis.newUnauthorizedError(message, data)
-```
-
-#### $security - Security & Encryption
-```javascript
-// Random generation
-$security.randomString(length) // Random string
-$security.randomStringWithAlphabet(length, alphabet) // Custom alphabet
-$security.pseudorandomString(length) // Pseudorandom string
-$security.pseudorandomStringWithAlphabet(length, alphabet)
-
-// Hashing
-$security.hash(data) // SHA256 hash
-$security.hashWithSalt(data, salt) // Hash with salt
-$security.equal(hash1, hash2) // Constant time comparison
-
-// JWT operations
-$security.parseJWT(token) // Parse JWT token
-$security.createJWT(payload, signingKey, duration) // Create JWT
-$security.parseUnverifiedJWT(token) // Parse without verification
-
-// Encryption (AES-256-GCM)
-$security.encrypt(data, key) // Encrypt data
-$security.decrypt(encryptedData, key) // Decrypt data
-
-// Generating keys
-$security.hs256() // Generate HS256 key
-$security.hs512() // Generate HS512 key
-```
-
-#### $template - Template Rendering
-```javascript
-// HTML template rendering
-$template.html(templateString, data) // Render HTML template
-$template.loadFS(filesystem, pattern) // Load templates from filesystem
-```
-
-#### $mails - Email Operations
-```javascript
-// Send emails
-$mails.send(mailerMessage) // Send email using configured mailer
-$mails.sendUsingOAuth2(mailerMessage, oauth2Config) // Send via OAuth2
-$mails.sendUsingSmtp(mailerMessage, smtpConfig) // Send via SMTP
-```
-
-#### $filesystem - File Operations
-```javascript
-// File system operations
-$filesystem.exists(path) // Check if file/dir exists
-$filesystem.list(dir) // List directory contents
-$filesystem.serve(c, key, name) // Serve file from filesystem
-$filesystem.copy(src, dest) // Copy file
-$filesystem.upload(multipart, key) // Handle file upload
-$filesystem.delete(key) // Delete file
-```
-
-#### $dbx - Database Utilities
-```javascript
-// Database query building and operations
-$dbx.query(sql, ...params) // Execute SQL query
-$dbx.select(...columns) // SELECT query builder
-$dbx.hashExp(data) // Create hash expression for queries
-$dbx.in(column, values) // IN clause helper
-$dbx.notIn(column, values) // NOT IN clause helper
-```
-
-#### $os - Operating System
-```javascript
-// OS operations
-$os.exec(command, ...args) // Execute system command
-$os.getenv(key) // Get environment variable
-$os.hostname() // Get system hostname
-$os.tempDir() // Get temp directory path
-```
-
-#### $http - HTTP Client
-```javascript
-// HTTP requests
-$http.send({
-    url: "https://api.example.com/data",
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({key: "value"}),
-    timeout: 30 // seconds
-})
-```
-
-#### Utility Functions
-```javascript
-// Global utility functions
-sleep(milliseconds) // Sleep/delay execution
-cronAdd(id, cronExpr, handler) // Add cron job
-cronRemove(id) // Remove cron job
-migrate(upFunc, downFunc) // Database migration
-readerToString(reader, maxBytes) // Convert reader to string
-
-// Router functions  
-routerAdd(method, path, handler, ...middlewares) // Add route
-routerUse(handler) // Add global middleware
-```
-
-#### Form Constructors
-```javascript
-// Form validation helpers
-new RecordUpsertForm($app, record) // Record create/update form
-new TestEmailSendForm($app) // Test email form
-new TestS3FilesystemForm($app) // Test S3 form
-new AppleClientSecretCreateForm($app) // Apple OAuth form
-```
-
-#### Error Constructors
-```javascript
-// Create custom errors
-new ApiError(status, message, data) // Generic API error
-new BadRequestError(message, data) // 400 error
-new UnauthorizedError(message, data) // 401 error  
-new ForbiddenError(message, data) // 403 error
-new NotFoundError(message, data) // 404 error
-new TooManyRequestsError(message, data) // 429 error
-new InternalServerError(message, data) // 500 error
-new ValidationError(field, code, message) // Validation error
-```
-
----
-
-## Admin API (Superuser)
-
-### Collections Management
-```javascript
-// List collections
-const collections = await pb.collections.getList();
-
-// Create collection
-const collection = await pb.collections.create({
-    name: "posts",
-    type: "base",
-    fields: [
-        {
-            name: "title",
-            type: "text",
-            required: true
-        },
-        {
-            name: "content", 
-            type: "editor",
-            required: true
+// Transactions
+function transferCredits(fromUserId, toUserId, amount) {
+    $app.dao().runInTransaction((txDao) => {
+        // Deduct from sender
+        const fromUser = txDao.findRecordById("users", fromUserId);
+        const currentCredits = fromUser.get("credits") || 0;
+        
+        if (currentCredits < amount) {
+            throw new BadRequestError("Insufficient credits");
         }
-    ]
-});
-
-// Update collection
-await pb.collections.update('posts', {
-    listRule: 'status = "published"'
-});
-
-// Delete collection
-await pb.collections.delete('posts');
+        
+        fromUser.set("credits", currentCredits - amount);
+        txDao.saveRecord(fromUser);
+        
+        // Add to recipient
+        const toUser = txDao.findRecordById("users", toUserId);
+        const recipientCredits = toUser.get("credits") || 0;
+        toUser.set("credits", recipientCredits + amount);
+        txDao.saveRecord(toUser);
+        
+        // Create transaction record
+        const transactionCollection = txDao.findCollectionByNameOrId("transactions");
+        const transaction = new Record(transactionCollection, {
+            "from_user": fromUserId,
+            "to_user": toUserId,
+            "amount": amount,
+            "type": "transfer",
+            "created": new Date().toISOString()
+        });
+        txDao.saveRecord(transaction);
+    });
+}
 ```
 
-### Settings Management
+### HTTP Client and External APIs
+
 ```javascript
-// Authenticate as superuser first
-await pb.collection("_superusers").authWithPassword('admin@example.com', 'password');
+// pb_hooks/external.pb.js
 
-// Get all settings
-const settings = await pb.settings.getAll();
+// Making HTTP requests
+function notifySlack(message) {
+    const webhookUrl = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL";
+    
+    const response = $http.send({
+        url: webhookUrl,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            "text": message,
+            "channel": "#notifications"
+        })
+    });
+    
+    if (response.statusCode !== 200) {
+        console.error("Failed to send Slack notification:", response.body);
+    }
+}
 
-// Update settings
-await pb.settings.update({
-    meta: {
-        appName: 'My App',
-        appUrl: 'https://myapp.com'
+// Webhook handler
+routerAdd("POST", "/api/webhook/stripe", (e) => {
+    const signature = e.request.header("Stripe-Signature");
+    const body = e.request.body;
+    
+    // Verify webhook signature
+    if (!verifyStripeSignature(body, signature)) {
+        throw new UnauthorizedError("Invalid signature");
+    }
+    
+    const event = JSON.parse(body);
+    
+    switch (event.type) {
+        case 'payment_intent.succeeded':
+            handlePaymentSuccess(event.data.object);
+            break;
+        case 'payment_intent.payment_failed':
+            handlePaymentFailure(event.data.object);
+            break;
+        default:
+            console.log(`Unhandled event type: ${event.type}`);
+    }
+    
+    return e.json(200, {"received": true});
+});
+
+// Third-party API integration
+function validateAddress(address) {
+    const apiKey = "YOUR_API_KEY";
+    const response = $http.send({
+        url: `https://api.address-validator.com/validate`,
+        method: "POST", 
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({address})
+    });
+    
+    if (response.statusCode === 200) {
+        const data = JSON.parse(response.body);
+        return data.valid;
+    }
+    
+    return false;
+}
+```
+
+### File System Operations
+
+```javascript
+// pb_hooks/files.pb.js
+
+// Reading and writing files
+function generateReport(userId) {
+    const user = $app.dao().findRecordById("users", userId);
+    const posts = getUserPosts(userId);
+    
+    const reportContent = `
+User Report for ${user.get("name")}
+Generated: ${new Date().toISOString()}
+
+Total Posts: ${posts.length}
+User Email: ${user.get("email")}
+Account Created: ${user.get("created")}
+    `;
+    
+    const reportPath = `/tmp/report_${userId}.txt`;
+    $filesystem.writeFile(reportPath, reportContent);
+    
+    return reportPath;
+}
+
+// File operations
+function backupData() {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupDir = `/backups/${timestamp}`;
+    
+    // Create backup directory
+    $filesystem.createDir(backupDir);
+    
+    // Copy database
+    if ($filesystem.exists("/pb_data/data.db")) {
+        const dbContent = $filesystem.readFile("/pb_data/data.db");
+        $filesystem.writeFile(`${backupDir}/data.db`, dbContent);
+    }
+    
+    console.log(`Backup created: ${backupDir}`);
+}
+```
+
+### Security Utilities
+
+```javascript
+// pb_hooks/security.pb.js
+
+// Password utilities
+function hashPassword(password) {
+    return $security.hashPassword(password);
+}
+
+function verifyPassword(hash, password) {
+    return $security.compareHashAndPassword(hash, password);
+}
+
+// JWT tokens
+function createCustomToken(payload) {
+    const secret = $app.settings().meta.appSecret;
+    return $security.createJWT(payload, secret);
+}
+
+function verifyCustomToken(token) {
+    const secret = $app.settings().meta.appSecret;
+    return $security.parseJWT(token, secret);
+}
+
+// Random strings
+function generateApiKey() {
+    return $security.randomString(32);
+}
+
+function generateSecureCode() {
+    return $security.randomString(8, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+}
+```
+
+### Error Handling
+
+```javascript
+// pb_hooks/errors.pb.js
+
+// Custom error handling
+routerAdd("POST", "/api/risky-operation", (e) => {
+    try {
+        const result = performRiskyOperation();
+        return e.json(200, {"success": true, "data": result});
+        
+    } catch (error) {
+        console.error("Operation failed:", error);
+        
+        // Return appropriate HTTP error
+        if (error.message.includes("not found")) {
+            throw new NotFoundError("Resource not found");
+        } else if (error.message.includes("unauthorized")) {
+            throw new UnauthorizedError("Access denied");
+        } else {
+            throw new InternalServerError("Operation failed");
+        }
     }
 });
+
+// Global error handler
+onError((e) => {
+    console.error("Global error:", e.error);
+    
+    // Log to external service
+    logToExternalService({
+        error: e.error.message,
+        stack: e.error.stack,
+        timestamp: new Date().toISOString(),
+        request: {
+            method: e.request?.method,
+            url: e.request?.url
+        }
+    });
+    
+    e.next();
+});
+```
+
+### Module System
+
+```javascript
+// pb_hooks/utils.pb.js - Utility functions
+function validateEmail(email) {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(email);
+}
+
+function formatDate(date) {
+    return new Date(date).toLocaleDateString();
+}
+
+function slugify(text) {
+    return text
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/[\s_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+// Export functions
+module.exports = {
+    validateEmail,
+    formatDate,
+    slugify
+};
+
+// pb_hooks/main.pb.js - Import utilities  
+const utils = require(`${__hooks}/utils.pb.js`);
+
+routerAdd("POST", "/api/register", (e) => {
+    const data = new DynamicModel({
+        email: "",
+        name: ""
+    });
+    
+    e.bindBody(data);
+    
+    if (!utils.validateEmail(data.email)) {
+        throw new BadRequestError("Invalid email format");
+    }
+    
+    // Continue with registration
+    return e.json(200, {"success": true});
+});
+```
+
+### Best Practices
+
+1. **Performance**: Keep hooks lightweight and fast
+2. **Error Handling**: Always implement proper error handling
+3. **Logging**: Log important events for debugging
+4. **Security**: Validate all inputs and check permissions
+5. **Modules**: Use CommonJS modules for shared functionality
+6. **Testing**: Test hooks thoroughly in development
+7. **Documentation**: Comment complex logic clearly
+
+---
+
+## Deployment
+
+### Systemd Service (Linux)
+
+```ini
+# /etc/systemd/system/pocketbase.service
+[Unit]
+Description=PocketBase
+After=network.target
+
+[Service]
+Type=simple
+User=pocketbase
+Group=pocketbase
+WorkingDirectory=/opt/pocketbase
+ExecStart=/opt/pocketbase/pocketbase serve --http=127.0.0.1:8090
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Enable and start service
+sudo systemctl enable pocketbase
+sudo systemctl start pocketbase
+sudo systemctl status pocketbase
+```
+
+### Docker
+
+```dockerfile
+# Dockerfile
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates
+
+# Download PocketBase (replace with latest version)
+ADD https://github.com/pocketbase/pocketbase/releases/download/v0.20.0/pocketbase_0.20.0_linux_amd64.zip /tmp/pb.zip
+RUN unzip /tmp/pb.zip -d /pb/
+RUN chmod +x /pb/pocketbase
+
+EXPOSE 8090
+
+CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  pocketbase:
+    build: .
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pb_data:/pb/pb_data
+      - ./pb_migrations:/pb/pb_migrations
+      - ./pb_hooks:/pb/pb_hooks
+    environment:
+      - PB_ENCRYPTION_KEY=your-32-char-encryption-key-here
+    restart: unless-stopped
+```
+
+### Reverse Proxy (Nginx)
+
+```nginx
+# /etc/nginx/sites-available/pocketbase
+server {
+    listen 80;
+    server_name your-domain.com;
+    
+    # Redirect HTTP to HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+    
+    # SSL configuration
+    ssl_certificate /path/to/certificate.crt;
+    ssl_certificate_key /path/to/private.key;
+    
+    # Security headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    
+    # Proxy to PocketBase
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket support for realtime
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+    
+    # File upload size limit
+    client_max_body_size 50M;
+}
+```
+
+### Environment Variables
+
+```bash
+# Production environment variables
+export PB_DATA_DIR="/opt/pocketbase/data"
+export PB_ENCRYPTION_KEY="your-32-character-encryption-key-here"
+export PB_HOOKS_DIR="/opt/pocketbase/hooks"
+export PB_MIGRATIONS_DIR="/opt/pocketbase/migrations"
+export PB_HOOKS_POOL=20
 ```
 
 ---
 
-## Advanced Features
+## Advanced Configuration
 
-### Field Types
-```javascript
-// Text fields
-text, email, url, editor, json
+### Settings and Configuration
 
-// Number fields  
-number, bool
+```bash
+# Command line options
+./pocketbase serve \
+    --http=127.0.0.1:8090 \
+    --dir=/path/to/pb_data \
+    --migrationsDir=/path/to/migrations \
+    --hooksDir=/path/to/hooks \
+    --hooksPool=25 \
+    --publicDir=/path/to/public \
+    --indexFallback=true
 
-// Date/time
-date, datetime
-
-// Selection
-select (single), multiselect
-
-// Relations
-relation (single), multirelation
-
-// Files
-file (single), multifile
-
-// Special
-password, computed
-```
-
-### File Field Options
-```javascript
-{
-    maxSelect: 5,           // Max files
-    maxSize: 5242880,       // 5MB per file
-    mimeTypes: ["image/jpeg", "image/png"],
-    thumbs: ["100x100", "300x300"]
-}
-```
-
-### Relation Field Options
-```javascript
-{
-    collectionId: "users",
-    cascadeDelete: false,
-    maxSelect: 1,           // 1 = single relation, >1 = multiple
-    displayFields: ["name", "email"]
-}
+# Environment variables (alternative to CLI flags)
+PB_DATA_DIR=/path/to/pb_data
+PB_ENCRYPTION_KEY=your-32-char-key
+PB_HOOKS_DIR=/path/to/hooks
+PB_MIGRATIONS_DIR=/path/to/migrations
+PB_HOOKS_POOL=25
+PB_PUBLIC_DIR=/path/to/public
+PB_INDEX_FALLBACK=true
 ```
 
 ### Database Migrations
+
 ```javascript
-// pb_migrations/TIMESTAMP_migration_name.js
+// pb_migrations/1640995200_initial_schema.js
 migrate((db) => {
-    const dao = new Dao(db);
-    
-    // Collection operations
-    const collection = dao.findCollectionByNameOrId("posts");
-    collection.schema.addField(new SchemaField({
-        name: "slug",
-        type: "text"
-    }));
-    
-    return dao.saveCollection(collection);
+  // Create collections, add fields, set rules, etc.
+  
+  const usersCollection = new Collection({
+    "name": "users",
+    "type": "auth",
+    "options": {
+      "allowEmailAuth": true,
+      "allowUsernameAuth": false,
+      "requireEmail": true
+    },
+    "listRule": null,
+    "viewRule": "id = @request.auth.id",
+    "createRule": "",
+    "updateRule": "id = @request.auth.id",
+    "deleteRule": "id = @request.auth.id",
+    "schema": [
+      {
+        "name": "name",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": null,
+          "pattern": ""
+        }
+      }
+    ]
+  });
+
+  return Dao(db).saveCollection(usersCollection);
+
 }, (db) => {
-    // Rollback
-    const dao = new Dao(db);
-    const collection = dao.findCollectionByNameOrId("posts");
-    collection.schema.removeField("slug");
-    return dao.saveCollection(collection);
+  // Rollback
+  const dao = new Dao(db);
+  const collection = dao.findCollectionByNameOrId("users");
+  return dao.deleteCollection(collection);
 });
 ```
 
-### Health Check
+### Health Check and Monitoring
+
 ```javascript
-// Built-in health endpoint
-GET /api/health
-// Returns: {"code": 200, "message": "API is healthy."}
+// Built-in health check endpoint
+// GET /api/health
+{
+    "code": 200,
+    "message": "API is healthy",
+    "data": {
+        "canBackup": true
+    }
+}
+
+// Custom health check hook
+onBeforeServe((e) => {
+    // Add custom health check route
+    routerAdd("GET", "/api/status", (e) => {
+        const stats = {
+            "status": "healthy",
+            "timestamp": new Date().toISOString(),
+            "version": "0.20.0",
+            "uptime": process.uptime ? process.uptime() : "unknown",
+            "database": {
+                "connected": true,
+                "collections": $app.dao().findCollectionsByType("base").length
+            }
+        };
+        
+        return e.json(200, stats);
+    });
+    
+    e.next();
+});
 ```
 
----
+### Backup and Restore
 
-## Production Deployment
-
-### Environment Variables
 ```bash
-PB_DATA_DIR=/path/to/data
-PB_HOOKS_DIR=/path/to/hooks  
-PB_MIGRATIONS_DIR=/path/to/migrations
-PB_PUBLIC_DIR=/path/to/public
+# Manual backup
+./pocketbase backup /path/to/backup.zip
+
+# Automated backup script
+#!/bin/bash
+BACKUP_DIR="/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/pocketbase_$DATE.zip"
+
+mkdir -p $BACKUP_DIR
+./pocketbase backup $BACKUP_FILE
+
+# Keep only last 7 backups
+find $BACKUP_DIR -name "pocketbase_*.zip" -type f -mtime +7 -delete
+
+# Restore from backup
+./pocketbase restore /path/to/backup.zip
 ```
 
-### Command Line Options
-```bash
-./pocketbase serve --http=0.0.0.0:8090 --dir=/custom/pb_data --origins="*"
+### Performance Optimization
 
-# Available flags:
---http          # HTTP server address (default: 127.0.0.1:8090)
---dir           # Data directory (default: pb_data)
---migrations    # Migrations directory (default: pb_migrations)  
---hooks         # Hooks directory (default: pb_hooks)
---public        # Public directory (default: pb_public)
---origins       # CORS origins
---dev           # Development mode
-```
+```javascript
+// Database indexing via migration
+migrate((db) => {
+    // Add database indexes for better query performance
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_posts_status ON posts (status);
+        CREATE INDEX IF NOT EXISTS idx_posts_author ON posts (author);
+        CREATE INDEX IF NOT EXISTS idx_posts_created ON posts (created);
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+    `);
+}, (db) => {
+    // Remove indexes
+    db.exec(`
+        DROP INDEX IF EXISTS idx_posts_status;
+        DROP INDEX IF EXISTS idx_posts_author;
+        DROP INDEX IF EXISTS idx_posts_created;
+        DROP INDEX IF EXISTS idx_users_email;
+    `);
+});
 
-### Docker Deployment
-```dockerfile
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY pocketbase .
-EXPOSE 8090
-CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
+// Query optimization
+function getOptimizedPosts(page = 1, perPage = 20) {
+    // Use specific fields to reduce data transfer
+    return $app.dao().findRecordsByFilter(
+        "posts",
+        "status = 'published'",
+        "-created",
+        perPage,
+        (page - 1) * perPage,
+        "id,title,excerpt,created,author" // Only fetch needed fields
+    );
+}
 ```
 
 ---
 
-## Best Practices
-
-### Security
-- Always set appropriate API rules
-- Use specific rules instead of empty strings when possible
-- Validate sensitive operations in hooks
-- Use HTTPS in production
-- Set proper CORS origins
-
-### Performance  
-- Use pagination for large datasets
-- Index frequently queried fields
-- Optimize expand queries
-- Cache static files
-- Use CDN for file storage
-
-### Data Modeling
-- Design relations carefully
-- Use computed fields for derived data
-- Consider View collections for complex queries
-- Normalize data appropriately
-- Plan file storage strategy
-
-### Development
-- Use TypeScript declarations for better DX
-- Test API rules thoroughly
-- Version control migrations
-- Monitor hook performance
-- Document custom routes
-
----
-
-## Common Patterns
-
-### User Profiles
-```javascript
-// Auth collection: users
-// Base collection: profiles (with user relation)
-// Rule: "@request.auth.id != '' && user = @request.auth.id"
-```
-
-### Multi-tenant SaaS
-```javascript
-// Collections: organizations, users, data
-// User belongs to organization
-// Rules: "organization = @request.auth.organization"
-```
-
-### Content Management
-```javascript
-// Collections: posts, categories, tags
-// Rules for draft/published content
-// Editor role management
-```
-
-### File Galleries
-```javascript
-// Use multifile fields
-// Generate thumbnails automatically
-// Implement lazy loading
-```
-
-### Real-time Chat
-```javascript
-// Collection: messages
-// Realtime subscriptions for live updates
-// Message history pagination
-```
-
----
-
-## Troubleshooting
-
-### Common Issues
-```javascript
-// CORS issues
-// Set proper origins in settings or CLI
-
-// Auth token expires
-// Implement token refresh logic
-
-// File upload limits
-// Check maxSize in field options
-
-// Realtime connection drops
-// Handle reconnection in client
-
-// Hook performance
-// Avoid heavy computation in JS hooks
-```
-
-### Debug Tools
-```javascript
-// Enable dev mode for detailed errors
-./pocketbase serve --dev
-
-// Use dashboard API preview
-// Check network tab in browser
-// Review pb_data/logs.db
-```
-
----
-
-*PocketBase v0.27+ - This reference covers the core features and APIs. Check the official documentation for the latest updates and additional features.*
+This comprehensive documentation covers all aspects of PocketBase development, from basic usage to advanced server-side scripting and production deployment. Use it as a complete reference for building applications with PocketBase.
