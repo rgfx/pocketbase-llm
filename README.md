@@ -42,15 +42,6 @@ Created specifically for:
 3. **Access Dashboard**: Visit `http://127.0.0.1:8090/_/`
 4. **Explore Documentation**: Reference the complete guide in `pocketbase-docs.txt`
 
-## 📁 File Structure
-
-```
-pocketbase-docs.txt    # Complete documentation (1,665+ lines)
-svelte-docs.txt        # Svelte 5 + SvelteKit documentation
-tailwind-docs.txt      # TailwindCSS v4 documentation
-README.md             # This file
-```
-
 ## 🎨 Key Features Covered
 
 - **Embedded SQLite Database** with automatic migrations
